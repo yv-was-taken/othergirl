@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let isTyping = false;
+  let { isTyping = false }: { isTyping?: boolean } = $props();
 </script>
 
 {#if isTyping}

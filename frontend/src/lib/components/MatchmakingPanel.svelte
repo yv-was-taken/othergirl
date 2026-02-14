@@ -1,20 +1,25 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-
-  export let categories: { id: string; name: string }[] = [];
-  export let languages: { id: string; name: string }[] = [];
-
-  export let selectedCategory = '';
-  export let selectedLanguage = '';
-
-  export let queued = false;
-  export let queuePosition: number | null = null;
-  export let queueWaitSeconds: number | null = null;
-
-  const dispatch = createEventDispatcher<{
-    join: undefined;
-    leave: undefined;
-  }>();
+  let {
+    categories = [],
+    languages = [],
+    selectedCategory = $bindable(''),
+    selectedLanguage = $bindable(''),
+    queued = false,
+    queuePosition = null,
+    queueWaitSeconds = null,
+    onjoin,
+    onleave
+  }: {
+    categories?: { id: string; name: string }[];
+    languages?: { id: string; name: string }[];
+    selectedCategory?: string;
+    selectedLanguage?: string;
+    queued?: boolean;
+    queuePosition?: number | null;
+    queueWaitSeconds?: number | null;
+    onjoin?: () => void;
+    onleave?: () => void;
+  } = $props();
 </script>
 
 <div class="surface space-y-4 p-4">
@@ -52,8 +57,8 @@
       <br />
       Estimated wait: {queueWaitSeconds ?? '-'}s
     </div>
-    <button class="btn-secondary w-full" on:click={() => dispatch('leave')}>Leave queue</button>
+    <button class="btn-secondary w-full" onclick={() => onleave?.()}>Leave queue</button>
   {:else}
-    <button class="btn-primary w-full" on:click={() => dispatch('join')}>Find chat</button>
+    <button class="btn-primary w-full" onclick={() => onjoin?.()}>Find chat</button>
   {/if}
 </div>

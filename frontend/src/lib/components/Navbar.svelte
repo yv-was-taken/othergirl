@@ -23,7 +23,7 @@
     {#if $auth.user}
       <div class="flex items-center gap-3">
         <span class="text-sm text-slate-200">{$auth.user.username}</span>
-        <button class="btn-secondary" on:click={clearSession}>Log out</button>
+        <button class="btn-secondary" onclick={clearSession}>Log out</button>
       </div>
     {:else}
       <a href="/login" class="btn-primary">Login</a>

@@ -13,9 +13,9 @@
     ended_at?: string;
   };
 
-  let chats: ChatSummary[] = [];
-  let loading = false;
-  let keepOnly = false;
+  let chats: ChatSummary[] = $state([]);
+  let loading = $state(false);
+  let keepOnly = $state(false);
 
   onMount(loadHistory);
 
@@ -39,7 +39,7 @@
     <div class="flex gap-2">
       <button
         class={`btn-secondary ${!keepOnly ? 'bg-white/20' : ''}`}
-        on:click={() => {
+        onclick={() => {
           keepOnly = false;
           loadHistory();
         }}
@@ -47,13 +47,13 @@
       >All</button>
       <button
         class={`btn-secondary ${keepOnly ? 'bg-white/20' : ''}`}
-        on:click={() => {
+        onclick={() => {
           keepOnly = true;
           loadHistory();
         }}
         disabled={loading}
       >Keeps</button>
-      <button class="btn-secondary" on:click={loadHistory} disabled={loading}>Refresh</button>
+      <button class="btn-secondary" onclick={loadHistory} disabled={loading}>Refresh</button>
     </div>
   </div>
 

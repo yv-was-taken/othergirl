@@ -1,7 +1,13 @@
 <script lang="ts">
-  export let username = 'othergirl';
-  export let color = '#ff6b35';
-  export let bubbleTheme = 'default';
+  let {
+    username = 'othergirl',
+    color = '#ff6b35',
+    bubbleTheme = 'default'
+  }: {
+    username?: string;
+    color?: string;
+    bubbleTheme?: string;
+  } = $props();
 </script>
 
 <div class="surface p-4">

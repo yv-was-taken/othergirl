@@ -16,8 +16,8 @@
     flagged?: boolean;
   };
 
-  let messages: ChatMessage[] = [];
-  let loading = false;
+  let messages: ChatMessage[] = $state([]);
+  let loading = $state(false);
 
   onMount(loadChat);
 

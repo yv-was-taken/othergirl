@@ -94,6 +94,13 @@ struct BootstrapEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AuthResponse {
+    Ok,
+    Failed { code: String, message: String },
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
     Queued {
@@ -184,12 +191,11 @@ async fn handle_socket(
         Err(err) => {
             let _ = socket
                 .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "code": "UNAUTHORIZED",
-                        "message": err.to_string()
+                    serde_json::to_string(&AuthResponse::Failed {
+                        code: "UNAUTHORIZED".to_owned(),
+                        message: err.to_string(),
                     })
-                    .to_string()
+                    .unwrap()
                     .into(),
                 ))
                 .await;
@@ -197,6 +203,14 @@ async fn handle_socket(
             return;
         }
     };
+
+    let _ = socket
+        .send(Message::Text(
+            serde_json::to_string(&AuthResponse::Ok)
+                .unwrap()
+                .into(),
+        ))
+        .await;
 
     if let Err(err) = set_session_presence(&state, user_id).await {
         error!(?err, "failed to register websocket session");

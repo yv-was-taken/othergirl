@@ -1,6 +1,19 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #fff4ee;
+  --color-brand-100: #ffe2d2;
+  --color-brand-200: #ffc2a7;
+  --color-brand-300: #ff9a72;
+  --color-brand-400: #ff6b35;
+  --color-brand-500: #e8541f;
+  --color-brand-600: #bf3e12;
+  --color-brand-700: #962f0f;
+  --color-brand-800: #76280f;
+  --color-brand-900: #5f220f;
+
+  --shadow-glow: 0 0 0 1px rgba(255, 107, 53, 0.25), 0 8px 24px rgba(0, 0, 0, 0.24);
+}
 
 :root {
   color-scheme: light;
@@ -15,7 +28,7 @@ body {
   @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur;
 }
 
-.btn {
+@utility btn {
   @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-semibold transition;
 }
 

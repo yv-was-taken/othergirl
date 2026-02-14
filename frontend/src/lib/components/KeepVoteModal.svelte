@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-
-  export let open = false;
-
-  const dispatch = createEventDispatcher<{
-    vote: { keep: boolean };
-    close: undefined;
-  }>();
+  let {
+    open = false,
+    onvote,
+    onclose
+  }: {
+    open?: boolean;
+    onvote?: (detail: { keep: boolean }) => void;
+    onclose?: () => void;
+  } = $props();
 </script>
 
 {#if open}
@@ -15,10 +16,10 @@
       <h3 class="text-lg font-semibold">Keep this chat?</h3>
       <p class="text-sm text-slate-300">If both people choose keep, it will be saved in history.</p>
       <div class="flex gap-2">
-        <button class="btn-primary flex-1" on:click={() => dispatch('vote', { keep: true })}>Keep</button>
-        <button class="btn-secondary flex-1" on:click={() => dispatch('vote', { keep: false })}>Skip</button>
+        <button class="btn-primary flex-1" onclick={() => onvote?.({ keep: true })}>Keep</button>
+        <button class="btn-secondary flex-1" onclick={() => onvote?.({ keep: false })}>Skip</button>
       </div>
-      <button class="btn-secondary w-full" on:click={() => dispatch('close')}>Close</button>
+      <button class="btn-secondary w-full" onclick={() => onclose?.()}>Close</button>
     </div>
   </div>
 {/if}

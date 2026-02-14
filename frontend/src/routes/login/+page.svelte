@@ -6,14 +6,14 @@
   import { apiFetch } from '$lib/api';
   import { setSession } from '$lib/stores/auth';
 
-  let mode: 'login' | 'register' = 'login';
+  let mode: 'login' | 'register' = $state('login');
 
-  let username = '';
-  let email = '';
-  let password = '';
-  let isAgeVerified = false;
+  let username = $state('');
+  let email = $state('');
+  let password = $state('');
+  let isAgeVerified = $state(false);
 
-  let loading = false;
+  let loading = $state(false);
 
   const oauthProviders = ['google', 'discord', 'github', 'telegram'] as const;
 
@@ -111,20 +111,20 @@
       <button
         type="button"
         class={`btn-secondary flex-1 ${mode === 'login' ? 'bg-white/20' : ''}`}
-        on:click={() => (mode = 'login')}
+        onclick={() => (mode = 'login')}
       >
         Login
       </button>
       <button
         type="button"
         class={`btn-secondary flex-1 ${mode === 'register' ? 'bg-white/20' : ''}`}
-        on:click={() => (mode = 'register')}
+        onclick={() => (mode = 'register')}
       >
         Register
       </button>
     </div>
 
-    <form class="space-y-3" on:submit|preventDefault={submit}>
+    <form class="space-y-3" onsubmit={(e) => { e.preventDefault(); submit(); }}>
       {#if mode === 'register'}
         <div>
           <label for="username-input" class="mb-1 block text-xs uppercase tracking-wide text-slate-400">Username</label>
@@ -158,7 +158,7 @@
       <p class="text-center text-xs uppercase tracking-wide text-slate-400">or continue with OAuth</p>
       <div class="grid grid-cols-2 gap-2">
         {#each oauthProviders as provider}
-          <button type="button" class="btn-secondary" disabled={loading} on:click={() => oauthLogin(provider)}>
+          <button type="button" class="btn-secondary" disabled={loading} onclick={() => oauthLogin(provider)}>
             {provider}
           </button>
         {/each}

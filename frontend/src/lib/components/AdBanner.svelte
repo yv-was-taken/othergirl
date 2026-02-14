@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let visible = true;
+  let { visible = true }: { visible?: boolean } = $props();
 </script>
 
 {#if visible}

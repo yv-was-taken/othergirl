@@ -1,4 +1,5 @@
 use axum::{extract::State, Json};
+use validator::Validate;
 
 use crate::{
     auth::middleware::AuthUser,
@@ -15,6 +16,8 @@ pub async fn send_award(
     auth_user: AuthUser,
     Json(payload): Json<SendAwardRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    payload.validate()?;
+
     let outcome = service::send_award_internal(
         &state,
         auth_user.user_id,

@@ -5,16 +5,16 @@
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
 
-  let balance = 0;
-  let transactions: { id: string; amount: number; transaction_type: string; created_at: string }[] = [];
-  let connectStatus: { stripe_account_id: string; payouts_enabled: boolean } | null = null;
-  let blockedUsers: { id: string; username: string; created_at: string }[] = [];
-  let cashoutAmount = 1000;
-  let buyAmount = 500;
-  let emoteToken = ':my_emote:';
-  let emoteName = 'My Emote';
-  let emotePrice = 100;
-  let emoteFile: File | null = null;
+  let balance = $state(0);
+  let transactions: { id: string; amount: number; transaction_type: string; created_at: string }[] = $state([]);
+  let connectStatus: { stripe_account_id: string; payouts_enabled: boolean } | null = $state(null);
+  let blockedUsers: { id: string; username: string; created_at: string }[] = $state([]);
+  let cashoutAmount = $state(1000);
+  let buyAmount = $state(500);
+  let emoteToken = $state(':my_emote:');
+  let emoteName = $state('My Emote');
+  let emotePrice = $state(100);
+  let emoteFile: File | null = $state(null);
 
   onMount(async () => {
     await refresh();
@@ -157,7 +157,7 @@
         <p class="text-sm text-slate-300">
           Status: {$auth.user.is_premium ? 'Premium active' : 'Free tier'}
         </p>
-        <button class="btn-primary" on:click={subscribe}>Activate Premium</button>
+        <button class="btn-primary" onclick={subscribe}>Activate Premium</button>
       </div>
 
       <div class="surface space-y-3 p-5">
@@ -165,7 +165,7 @@
         <p class="text-sm text-slate-300">Current balance: {balance}</p>
         <input class="input" type="number" min="1" bind:value={buyAmount} />
         <div class="flex gap-2">
-          <button class="btn-primary flex-1" on:click={buySparks}>Buy (Stripe)</button>
+          <button class="btn-primary flex-1" onclick={buySparks}>Buy (Stripe)</button>
         </div>
       </div>
 
@@ -177,9 +177,9 @@
         {:else}
           <p class="text-sm text-slate-300">No cashout account linked.</p>
         {/if}
-        <button class="btn-secondary" on:click={connectCashout}>Link cashout account</button>
+        <button class="btn-secondary" onclick={connectCashout}>Link cashout account</button>
         <input class="input" type="number" min="1000" bind:value={cashoutAmount} />
-        <button class="btn-primary" on:click={requestCashout}>Request Cashout</button>
+        <button class="btn-primary" onclick={requestCashout}>Request Cashout</button>
       </div>
 
       <div class="surface space-y-3 p-5">
@@ -209,7 +209,7 @@
               <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
                 <p class="font-semibold">{blocked.username}</p>
                 <p class="text-xs text-slate-400">{new Date(blocked.created_at).toLocaleString()}</p>
-                <button class="btn-secondary mt-2" on:click={() => unblock(blocked.id)}>Unblock</button>
+                <button class="btn-secondary mt-2" onclick={() => unblock(blocked.id)}>Unblock</button>
               </div>
             {/each}
           </div>
@@ -227,12 +227,12 @@
         <input
           type="file"
           accept="image/png,image/jpeg,image/webp,image/gif"
-          on:change={(event) => {
+          onchange={(event: Event) => {
             const input = event.currentTarget as HTMLInputElement;
             emoteFile = input.files?.[0] ?? null;
           }}
         />
-        <button class="btn-secondary" on:click={uploadEmote}>Upload Emote</button>
+        <button class="btn-secondary" onclick={uploadEmote}>Upload Emote</button>
       </div>
     </div>
   {/if}

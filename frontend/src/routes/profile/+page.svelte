@@ -7,12 +7,12 @@
 
   type Category = { id: string; name: string };
 
-  let bio = '';
-  let isAgeVerified = false;
-  let loading = false;
+  let bio = $state('');
+  let isAgeVerified = $state(false);
+  let loading = $state(false);
 
-  let categories: Category[] = [];
-  let selectedInterests: string[] = [];
+  let categories: Category[] = $state([]);
+  let selectedInterests: string[] = $state([]);
 
   onMount(async () => {
     if (!$auth.token) return;
@@ -121,7 +121,7 @@
                   ? 'border-brand-300/80 bg-brand-300/20 text-brand-100'
                   : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
               }`}
-              on:click={() => toggleInterest(category.id)}
+              onclick={() => toggleInterest(category.id)}
               type="button"
             >
               {category.name}
@@ -130,7 +130,7 @@
         </div>
       </div>
 
-      <button class="btn-primary" on:click={save} disabled={loading}>Save profile</button>
+      <button class="btn-primary" onclick={save} disabled={loading}>Save profile</button>
     </div>
   {/if}
 </section>

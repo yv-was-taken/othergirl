@@ -1,5 +1,6 @@
 use axum::{extract::State, Json};
 use uuid::Uuid;
+use validator::Validate;
 
 use crate::{
     auth::middleware::AuthUser,
@@ -45,6 +46,8 @@ pub async fn update_me(
     auth_user: AuthUser,
     Json(payload): Json<UpdateProfileRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    payload.validate()?;
+
     let mut tx = state.db.begin().await?;
 
     let user = sqlx::query_as::<_, UserProfile>(

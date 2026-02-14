@@ -4,6 +4,7 @@ use axum::{
 };
 use serde::Deserialize;
 use uuid::Uuid;
+use validator::Validate;
 
 use crate::{
     auth::middleware::AuthUser,
@@ -15,9 +16,11 @@ use crate::{
     AppState,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct Pagination {
+    #[validate(range(min = 1))]
     pub page: Option<i64>,
+    #[validate(range(min = 1, max = 100))]
     pub per_page: Option<i64>,
 }
 
@@ -26,6 +29,8 @@ pub async fn list_chats(
     auth_user: AuthUser,
     Query(pagination): Query<Pagination>,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
+    pagination.validate()?;
+
     let page = pagination.page.unwrap_or(1).max(1);
     let per_page = pagination.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -60,6 +65,8 @@ pub async fn list_kept_chats(
     auth_user: AuthUser,
     Query(pagination): Query<Pagination>,
 ) -> AppResult<Json<Vec<ChatSummary>>> {
+    pagination.validate()?;
+
     let page = pagination.page.unwrap_or(1).max(1);
     let per_page = pagination.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;

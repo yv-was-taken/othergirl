@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
+use validator::Validate;
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct UserProfile {
@@ -16,8 +17,9 @@ pub struct UserProfile {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct UpdateProfileRequest {
+    #[validate(length(max = 500))]
     pub bio: Option<String>,
     pub is_age_verified: Option<bool>,
     pub interest_category_ids: Option<Vec<Uuid>>,

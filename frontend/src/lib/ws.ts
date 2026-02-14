@@ -1,12 +1,26 @@
 const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
 
-type WsEvent = {
-  type: string;
-  [key: string]: unknown;
-};
+// Mirrors backend AuthResponse enum (serde tag="status", rename_all="snake_case")
+type AuthResponse =
+  | { status: 'ok' }
+  | { status: 'failed'; code: string; message: string };
+
+// Mirrors backend ServerEvent enum (serde tag="type", rename_all="snake_case")
+export type ServerEvent =
+  | { type: 'queued'; position: number; queue: string }
+  | { type: 'matched'; chat_id: string; partner: { id: string; username: string; bio?: string; badges?: string[]; interests?: string[]; flare?: Record<string, unknown> } }
+  | { type: 'message'; id: string; chat_id: string; sender_id: string; content: string; timestamp: string; flagged: boolean }
+  | { type: 'typing'; user_id: string; is_typing: boolean }
+  | { type: 'read_receipt'; message_id: string; reader_id: string }
+  | { type: 'partner_keep_vote' }
+  | { type: 'keep_result'; both_kept: boolean }
+  | { type: 'award_received'; recipient_id: string; award_type: string; spark_amount: number; your_cut: number }
+  | { type: 'partner_left'; user_id: string }
+  | { type: 'cooldown'; seconds: number }
+  | { type: 'error'; code: string; message: string };
 
 type WsHandlers = {
-  onEvent: (event: WsEvent) => void;
+  onEvent: (event: ServerEvent) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onError?: (error: Event) => void;
@@ -25,18 +39,34 @@ export function connectChatSocket(chatId: string, token: string, handlers: WsHan
   const maxRetries = 5;
 
   const connect = () => {
-    const url = buildWsUrl(chatId, token);
+    const url = buildWsUrl();
     socket = new WebSocket(url);
+    let authenticated = false;
 
     socket.onopen = () => {
-      retries = 0;
-      handlers.onOpen?.();
+      socket!.send(JSON.stringify({ type: 'auth', token, chat_id: chatId }));
     };
 
     socket.onmessage = (message) => {
       try {
-        const data = JSON.parse(message.data) as WsEvent;
-        handlers.onEvent(data);
+        if (!authenticated) {
+          const response = JSON.parse(message.data) as AuthResponse;
+          switch (response.status) {
+            case 'ok':
+              authenticated = true;
+              retries = 0;
+              handlers.onOpen?.();
+              break;
+            case 'failed':
+              manualClose = true;
+              handlers.onEvent({ type: 'error', code: response.code, message: response.message });
+              break;
+          }
+          return;
+        }
+
+        const event = JSON.parse(message.data) as ServerEvent;
+        handlers.onEvent(event);
       } catch {
         handlers.onEvent({ type: 'error', code: 'PARSE_ERROR', message: 'Invalid WS payload' });
       }
@@ -49,7 +79,10 @@ export function connectChatSocket(chatId: string, token: string, handlers: WsHan
     socket.onclose = () => {
       handlers.onClose?.();
 
-      if (manualClose || retries >= maxRetries) {
+      if (manualClose) return;
+
+      if (retries >= maxRetries) {
+        handlers.onEvent({ type: 'error', code: 'CONNECTION_LOST', message: 'Unable to connect. Please refresh the page.' });
         return;
       }
 
@@ -73,12 +106,7 @@ export function connectChatSocket(chatId: string, token: string, handlers: WsHan
   };
 }
 
-function buildWsUrl(chatId: string, token: string): string {
+function buildWsUrl(): string {
   const base = API_BASE.replace('http://', 'ws://').replace('https://', 'wss://');
-  const url = new URL(`${base}/api/chat`);
-
-  url.searchParams.set('token', token);
-  url.searchParams.set('chat_id', chatId);
-
-  return url.toString();
+  return `${base}/api/chat`;
 }

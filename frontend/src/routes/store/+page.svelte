@@ -32,14 +32,14 @@
     is_active: boolean;
   };
 
-  let items: StoreItem[] = [];
-  let owned: OwnedItem[] = [];
-  let equippedIds: string[] = [];
-  let emotes: EmoteItem[] = [];
-  let ownedEmoteIds: string[] = [];
-  let balance = 0;
+  let items: StoreItem[] = $state([]);
+  let owned: OwnedItem[] = $state([]);
+  let equippedIds: string[] = $state([]);
+  let emotes: EmoteItem[] = $state([]);
+  let ownedEmoteIds: string[] = $state([]);
+  let balance = $state(0);
 
-  let loading = false;
+  let loading = $state(false);
 
   onMount(async () => {
     await refresh();
@@ -142,11 +142,11 @@
           <p class="text-sm text-brand-200">{item.price_sparks} sparks</p>
 
           {#if isOwned(item.id)}
-            <button class="btn-secondary w-full" on:click={() => toggleEquip(item.id)} disabled={loading}>
+            <button class="btn-secondary w-full" onclick={() => toggleEquip(item.id)} disabled={loading}>
               {equippedIds.includes(item.id) ? 'Unequip' : 'Equip'}
             </button>
           {:else}
-            <button class="btn-primary w-full" on:click={() => buy(item.id)} disabled={loading}>Buy</button>
+            <button class="btn-primary w-full" onclick={() => buy(item.id)} disabled={loading}>Buy</button>
           {/if}
         </div>
       {/each}
@@ -171,7 +171,7 @@
               {#if ownedEmoteIds.includes(emote.id)}
                 <button class="btn-secondary mt-2 w-full" disabled>Owned</button>
               {:else}
-                <button class="btn-primary mt-2 w-full" on:click={() => buyEmote(emote.id)} disabled={loading}>
+                <button class="btn-primary mt-2 w-full" onclick={() => buyEmote(emote.id)} disabled={loading}>
                   Buy Emote
                 </button>
               {/if}

@@ -1,9 +1,17 @@
 <script lang="ts">
-  export let username = 'stranger';
-  export let bio = '';
-  export let badges: string[] = [];
-  export let interests: string[] = [];
-  export let flare: Record<string, unknown> = {};
+  let {
+    username = 'stranger',
+    bio = '',
+    badges = [],
+    interests = [],
+    flare = {}
+  }: {
+    username?: string;
+    bio?: string;
+    badges?: string[];
+    interests?: string[];
+    flare?: Record<string, unknown>;
+  } = $props();
 </script>
 
 <div class="surface space-y-2 p-4">

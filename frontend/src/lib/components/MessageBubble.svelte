@@ -2,15 +2,17 @@
   import { applyEmotes } from '$lib/utils/emotes';
   import { renderMarkdown } from '$lib/utils/markdown';
 
-  export let message: {
-    content: string;
-    sender_id: string;
-    timestamp: string;
-    flagged?: boolean;
-  };
-  export let mine = false;
+  let { message, mine = false }: {
+    message: {
+      content: string;
+      sender_id: string;
+      timestamp: string;
+      flagged?: boolean;
+    };
+    mine?: boolean;
+  } = $props();
 
-  $: rendered = applyEmotes(renderMarkdown(message.content));
+  const rendered = $derived(applyEmotes(renderMarkdown(message.content)));
 </script>
 
 <div class={`max-w-[85%] rounded-2xl px-4 py-2 text-sm shadow ${mine ? 'ml-auto bg-brand-400 text-white' : 'bg-white/10 text-slate-100'}`}>

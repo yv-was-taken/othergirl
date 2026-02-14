@@ -24,16 +24,17 @@
   type Category = { id: string; name: string };
   type Language = { id: string; name: string };
 
-  let categories: Category[] = [];
-  let languages: Language[] = [];
+  let categories: Category[] = $state([]);
+  let languages: Language[] = $state([]);
 
-  let selectedCategory = '';
-  let selectedLanguage = '';
+  let selectedCategory = $state('');
+  let selectedLanguage = $state('');
 
   let socket: ChatSocket | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
 
-  let keepPromptOpen = false;
+  let keepPromptOpen = $state(false);
+  let connectionError = $state('');
 
   onMount(async () => {
     await Promise.all([loadCategories(), loadLanguages()]);
@@ -154,6 +155,7 @@
     if (!token) return;
 
     socket?.close();
+    connectionError = '';
     socket = connectChatSocket(chatId, token, {
       onEvent(event) {
         switch (event.type) {
@@ -161,7 +163,7 @@
             setQueue(Number(event.position ?? 1), 4);
             break;
           case 'matched':
-            if (typeof event.chat_id === 'string' && event.partner && !$chat.chatId) {
+            if (typeof event.chat_id === 'string' && event.partner && !get(chat).chatId) {
               setMatch(String(event.chat_id), event.partner as Record<string, unknown> as {
                 id: string;
                 username: string;
@@ -213,6 +215,9 @@
             break;
           }
           case 'error':
+            if (event.code === 'CONNECTION_LOST') {
+              connectionError = String(event.message);
+            }
             toast.error(String(event.message ?? 'WebSocket error'));
             break;
           default:
@@ -222,29 +227,29 @@
     });
   }
 
-  function sendMessage(event: CustomEvent<{ content: string }>) {
-    socket?.send({ type: 'message', content: event.detail.content });
+  function sendMessage(detail: { content: string }) {
+    socket?.send({ type: 'message', content: detail.content });
   }
 
-  function sendTyping(event: CustomEvent<{ isTyping: boolean }>) {
-    socket?.send({ type: 'typing', is_typing: event.detail.isTyping });
+  function sendTyping(detail: { isTyping: boolean }) {
+    socket?.send({ type: 'typing', is_typing: detail.isTyping });
   }
 
-  function keepVote(event: CustomEvent<{ keep: boolean }>) {
-    socket?.send({ type: 'keep_vote', keep: event.detail.keep });
+  function keepVote(detail: { keep: boolean }) {
+    socket?.send({ type: 'keep_vote', keep: detail.keep });
   }
 
-  function award(event: CustomEvent<{ award_type: string; spark_amount: number }>) {
+  function award(detail: { award_type: string; spark_amount: number }) {
     socket?.send({
       type: 'award',
-      award_type: event.detail.award_type,
-      spark_amount: event.detail.spark_amount
+      award_type: detail.award_type,
+      spark_amount: detail.spark_amount
     });
   }
 
   async function reportPartner() {
-    const partner = $chat.partner;
-    const chatId = $chat.chatId;
+    const partner = get(chat).partner;
+    const chatId = get(chat).chatId;
 
     if (!partner?.id || !chatId) {
       toast.error('No active partner to report');
@@ -273,7 +278,7 @@
   }
 
   async function blockPartner() {
-    const partner = $chat.partner;
+    const partner = get(chat).partner;
     if (!partner?.id) {
       toast.error('No active partner to block');
       return;
@@ -319,8 +324,8 @@
         queued={$chat.queued}
         queuePosition={$chat.queuePosition}
         queueWaitSeconds={$chat.queueWaitSeconds}
-        on:join={joinQueue}
-        on:leave={leaveQueue}
+        onjoin={joinQueue}
+        onleave={leaveQueue}
       />
 
       <ProfileCard
@@ -332,8 +337,8 @@
       />
 
       <div class="surface flex gap-2 p-3">
-        <button class="btn-secondary flex-1" on:click={reportPartner} disabled={!$chat.chatId}>Report</button>
-        <button class="btn-secondary flex-1" on:click={blockPartner} disabled={!$chat.partner?.id}>Block</button>
+        <button class="btn-secondary flex-1" onclick={reportPartner} disabled={!$chat.chatId}>Report</button>
+        <button class="btn-secondary flex-1" onclick={blockPartner} disabled={!$chat.partner?.id}>Block</button>
       </div>
 
       <AdBanner visible={!$auth.user.is_premium} />
@@ -344,19 +349,20 @@
       currentUserId={$auth.user.id}
       partnerTyping={$chat.partnerTyping}
       connected={$chat.chatId !== null}
+      {connectionError}
       partnerName={$chat.partner?.username ?? 'stranger'}
-      on:send={sendMessage}
-      on:typing={sendTyping}
-      on:leave={leaveChat}
-      on:next={nextChat}
-      on:keep_vote={keepVote}
-      on:award={award}
+      onsend={sendMessage}
+      ontyping={sendTyping}
+      onleave={leaveChat}
+      onnext={nextChat}
+      onkeepvote={keepVote}
+      onaward={award}
     />
   </section>
 
   <KeepVoteModal
     open={keepPromptOpen}
-    on:vote={keepVote}
-    on:close={() => (keepPromptOpen = false)}
+    onvote={keepVote}
+    onclose={() => (keepPromptOpen = false)}
   />
 {/if}

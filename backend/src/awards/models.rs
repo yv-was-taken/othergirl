@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
+use validator::Validate;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Award {
@@ -15,9 +16,10 @@ pub struct Award {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct SendAwardRequest {
     pub chat_id: Uuid,
     pub award_type: String,
+    #[validate(range(min = 1))]
     pub spark_amount: i64,
 }

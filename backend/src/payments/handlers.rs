@@ -7,6 +7,7 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
+use validator::Validate;
 
 use crate::{
     auth::middleware::AuthUser,
@@ -24,16 +25,19 @@ pub struct SubscribeRequest {
     pub cancel_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct BuySparksRequest {
+    #[validate(range(min = 1))]
     pub amount: i64,
     pub success_url: Option<String>,
     pub cancel_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct TxPagination {
+    #[validate(range(min = 1))]
     pub page: Option<i64>,
+    #[validate(range(min = 1, max = 100))]
     pub per_page: Option<i64>,
 }
 
@@ -43,8 +47,9 @@ pub struct CashoutConnectRequest {
     pub return_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct CashoutRequest {
+    #[validate(range(min = 1000))]
     pub amount: i64,
 }
 
@@ -120,11 +125,7 @@ pub async fn buy_sparks(
     auth_user: AuthUser,
     Json(payload): Json<BuySparksRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if payload.amount <= 0 {
-        return Err(AppError::BadRequest(
-            "amount must be greater than 0".to_owned(),
-        ));
-    }
+    payload.validate()?;
 
     let stripe_secret = stripe_secret(&state)?;
     let success_url = payload
@@ -301,6 +302,8 @@ pub async fn transactions(
     auth_user: AuthUser,
     Query(pagination): Query<TxPagination>,
 ) -> AppResult<Json<serde_json::Value>> {
+    pagination.validate()?;
+
     let page = pagination.page.unwrap_or(1).max(1);
     let per_page = pagination.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -407,11 +410,7 @@ pub async fn cashout_request(
     auth_user: AuthUser,
     Json(payload): Json<CashoutRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if payload.amount < 1000 {
-        return Err(AppError::BadRequest(
-            "minimum cashout amount is 1000 sparks ($10)".to_owned(),
-        ));
-    }
+    payload.validate()?;
 
     let connect = sqlx::query_as::<_, (String, bool)>(
         r#"

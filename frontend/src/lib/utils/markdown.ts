@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
 marked.setOptions({
@@ -6,5 +7,6 @@ marked.setOptions({
 });
 
 export function renderMarkdown(input: string): string {
-  return marked.parse(input) as string;
+  const raw = marked.parse(input) as string;
+  return DOMPurify.sanitize(raw);
 }
