@@ -1,0 +1,15 @@
+[Unit]
+Description=Othergirl Cloudflare Tunnel
+After=network-online.target othergirl-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/othergirl/cloudflared.env
+ExecStart=/usr/bin/env cloudflared tunnel --no-autoupdate run --token ${CLOUDFLARED_TUNNEL_TOKEN}
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

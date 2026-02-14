@@ -14,7 +14,7 @@ Othergirl is a privacy-first random 1:1 text chat platform with category/languag
 
 - `backend/`: API, WebSocket server, SQLx migrations
 - `frontend/`: SvelteKit app
-- `deploy/`: backend systemd, nginx API config, cloudflare pages docs, backup/deploy scripts
+- `deploy/`: backend+tunnel systemd, cloudflare docs, env templates, backup/deploy scripts
 
 ## Implemented Features
 
@@ -97,6 +97,55 @@ bun run build
 
 ## Deployment
 
-- Backend runs on Hetzner VPS (`deploy/systemd/othergirl-backend.service`, `deploy/nginx/othergirl.conf`, `deploy/scripts/deploy.sh`)
-- Frontend runs on Cloudflare Pages (`deploy/cloudflare/README.md`)
-- PostgreSQL backup helper: `deploy/scripts/backup_postgres.sh`
+Backend runs on Hetzner VPS and frontend runs on Cloudflare Pages.
+Public backend access is via Cloudflare Tunnel (not nginx).
+
+Deployment assets:
+
+- `deploy/scripts/bootstrap.sh`: one-time host setup + first deploy
+- `deploy/scripts/deploy.sh`: idempotent backend deploy (sync/build/systemd/restart)
+- `deploy/systemd/othergirl-backend.service`: backend service unit
+- `deploy/systemd/othergirl-cloudflared.service`: cloudflared tunnel service unit
+- `deploy/scripts/backup_postgres.sh`: postgres backup job
+- `deploy/env/backend.production.env.example`: production backend env template
+- `deploy/env/cloudflared.env.example`: tunnel token env template
+- `deploy/env/backup.env.example`: backup cron env template
+- `deploy/cloudflare/README.md`: Cloudflare Pages + Tunnel setup
+
+### One-Time Server Bootstrap (copy/paste)
+
+Run on a fresh Ubuntu VPS:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/yv-was-taken/othergirl.git
+cd othergirl
+sudo mkdir -p /opt/othergirl/backend /etc/othergirl
+sudo cp deploy/env/backend.production.env.example /opt/othergirl/backend/.env
+sudo cp deploy/env/cloudflared.env.example /etc/othergirl/cloudflared.env
+sudo nano /opt/othergirl/backend/.env
+sudo nano /etc/othergirl/cloudflared.env
+sudo bash deploy/scripts/bootstrap.sh
+```
+
+`/etc/othergirl/cloudflared.env` must contain:
+
+```bash
+CLOUDFLARED_TUNNEL_TOKEN=<token from Cloudflare Zero Trust tunnel>
+```
+
+### Routine Backend Deploy (after code changes)
+
+From the checked-out repo on the server:
+
+```bash
+sudo bash deploy/scripts/deploy.sh
+```
+
+### Post-Deploy Checks
+
+```bash
+sudo systemctl status othergirl-backend --no-pager
+sudo systemctl status othergirl-cloudflared --no-pager
+curl -fsS http://127.0.0.1:8080/health
+```
