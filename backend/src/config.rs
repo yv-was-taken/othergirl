@@ -28,7 +28,6 @@ pub struct AppConfig {
     pub github_oauth_client_id: Option<String>,
     pub github_oauth_client_secret: Option<String>,
     pub telegram_bot_token: Option<String>,
-    pub telegram_bot_username: Option<String>,
     pub oauth_state_ttl_seconds: u64,
     pub matcher_interval_ms: u64,
     pub queue_session_ttl_seconds: u64,
@@ -36,11 +35,6 @@ pub struct AppConfig {
     pub chat_key_encryption_key: [u8; 32],
     pub emote_upload_dir: String,
     pub emote_public_base_url: String,
-    pub emote_s3_endpoint: Option<String>,
-    pub emote_s3_bucket: Option<String>,
-    pub emote_s3_region: Option<String>,
-    pub emote_s3_access_key_id: Option<String>,
-    pub emote_s3_secret_access_key: Option<String>,
     pub admin_user_ids: Vec<Uuid>,
 }
 
@@ -88,7 +82,6 @@ impl AppConfig {
             github_oauth_client_id: optional_env("GITHUB_OAUTH_CLIENT_ID"),
             github_oauth_client_secret: optional_env("GITHUB_OAUTH_CLIENT_SECRET"),
             telegram_bot_token: optional_env("TELEGRAM_BOT_TOKEN"),
-            telegram_bot_username: optional_env("TELEGRAM_BOT_USERNAME"),
             oauth_state_ttl_seconds: env_u64("OAUTH_STATE_TTL_SECONDS", 10 * 60),
             matcher_interval_ms: env_u64("MATCHER_INTERVAL_MS", 500),
             queue_session_ttl_seconds: env_u64("QUEUE_SESSION_TTL_SECONDS", 60 * 60),
@@ -98,11 +91,6 @@ impl AppConfig {
                 .unwrap_or_else(|_| "uploads/emotes".to_owned()),
             emote_public_base_url: env::var("EMOTE_PUBLIC_BASE_URL")
                 .unwrap_or_else(|_| format!("{public_api_base_url}/assets/emotes")),
-            emote_s3_endpoint: optional_env("EMOTE_S3_ENDPOINT"),
-            emote_s3_bucket: optional_env("EMOTE_S3_BUCKET"),
-            emote_s3_region: optional_env("EMOTE_S3_REGION"),
-            emote_s3_access_key_id: optional_env("EMOTE_S3_ACCESS_KEY_ID"),
-            emote_s3_secret_access_key: optional_env("EMOTE_S3_SECRET_ACCESS_KEY"),
             admin_user_ids: parse_admin_user_ids(),
         }
     }
