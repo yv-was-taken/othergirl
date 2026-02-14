@@ -8,6 +8,6 @@ use crate::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(handlers::list_categories))
-        .route("/:id", get(handlers::get_category))
+        .route("/{id}", get(handlers::get_category))
         .route("/suggest", post(handlers::suggest_category))
 }

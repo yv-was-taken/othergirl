@@ -14,5 +14,5 @@ pub fn routes() -> Router<AppState> {
             "/blocks",
             post(handlers::create_block).get(handlers::list_blocks),
         )
-        .route("/blocks/:user_id", delete(handlers::delete_block))
+        .route("/blocks/{user_id}", delete(handlers::delete_block))
 }
