@@ -1,0 +1,16 @@
+# Rust
+backend/target/
+
+# JS
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+
+# Env
+**/.env
+
+# Bun
+frontend/bun.lockb
+
+# Logs
+*.log

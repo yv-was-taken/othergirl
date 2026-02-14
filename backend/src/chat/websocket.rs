@@ -1,0 +1,813 @@
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
+    response::Response,
+};
+use chrono::{DateTime, Utc};
+use futures::{SinkExt, StreamExt};
+use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
+use tokio::{
+    sync::{broadcast, mpsc, RwLock},
+    task::JoinHandle,
+    time::{interval, timeout},
+};
+use tracing::{debug, error};
+use uuid::Uuid;
+
+use crate::{
+    auth::jwt::verify_token,
+    awards::service,
+    chat::{encryption, safety},
+    error::{AppError, AppResult},
+    matchmaking::queue::{self, QueueStatus},
+    AppState,
+};
+
+#[derive(Clone, Default)]
+pub struct ChatHub {
+    channels: Arc<RwLock<HashMap<Uuid, broadcast::Sender<ServerEvent>>>>,
+}
+
+impl ChatHub {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    async fn sender_for(&self, chat_id: Uuid) -> broadcast::Sender<ServerEvent> {
+        let mut channels = self.channels.write().await;
+        channels
+            .entry(chat_id)
+            .or_insert_with(|| {
+                let (sender, _) = broadcast::channel(256);
+                sender
+            })
+            .clone()
+    }
+
+    pub async fn send(&self, chat_id: Uuid, event: ServerEvent) {
+        let sender = self.sender_for(chat_id).await;
+        let _ = sender.send(event);
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WsQuery {
+    pub token: Option<String>,
+    pub chat_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientEvent {
+    Auth {
+        token: String,
+        chat_id: Option<Uuid>,
+    },
+    Message {
+        content: String,
+    },
+    Typing {
+        is_typing: bool,
+    },
+    ReadReceipt {
+        message_id: Uuid,
+    },
+    KeepVote {
+        keep: bool,
+    },
+    Award {
+        award_type: String,
+        spark_amount: i64,
+    },
+    Leave,
+}
+
+#[derive(Debug, Deserialize)]
+struct BootstrapEvent {
+    token: String,
+    chat_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerEvent {
+    Queued {
+        position: usize,
+        queue: String,
+    },
+    Matched {
+        chat_id: Uuid,
+        partner: serde_json::Value,
+    },
+    Message {
+        id: Uuid,
+        chat_id: Uuid,
+        sender_id: Uuid,
+        content: String,
+        timestamp: DateTime<Utc>,
+        flagged: bool,
+    },
+    Typing {
+        user_id: Uuid,
+        is_typing: bool,
+    },
+    ReadReceipt {
+        message_id: Uuid,
+        reader_id: Uuid,
+    },
+    PartnerKeepVote,
+    KeepResult {
+        both_kept: bool,
+    },
+    AwardReceived {
+        recipient_id: Uuid,
+        award_type: String,
+        spark_amount: i64,
+        your_cut: i64,
+    },
+    PartnerLeft {
+        user_id: Uuid,
+    },
+    Cooldown {
+        seconds: u64,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+}
+
+pub async fn ws_handler(
+    State(state): State<AppState>,
+    Query(params): Query<WsQuery>,
+    ws: WebSocketUpgrade,
+) -> AppResult<Response> {
+    let pre_user_id = if let Some(token) = params.token.as_deref() {
+        let claims = verify_token(token, &state.jwt)?;
+        let user_id = Uuid::parse_str(claims.sub.as_str())
+            .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+
+        if let Some(chat_id) = params.chat_id {
+            ensure_chat_member(&state, chat_id, user_id).await?;
+        }
+
+        Some(user_id)
+    } else {
+        None
+    };
+
+    Ok(ws.on_upgrade(move |socket| {
+        handle_socket(socket, state, pre_user_id, params.chat_id)
+    }))
+}
+
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    pre_user_id: Option<Uuid>,
+    initial_chat_id: Option<Uuid>,
+) {
+    let (user_id, mut current_chat_id) = match authenticate_socket(
+        &mut socket,
+        &state,
+        pre_user_id,
+        initial_chat_id,
+    )
+    .await
+    {
+        Ok(data) => data,
+        Err(err) => {
+            let _ = socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "error",
+                        "code": "UNAUTHORIZED",
+                        "message": err.to_string()
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            let _ = socket.close().await;
+            return;
+        }
+    };
+
+    if let Err(err) = set_session_presence(&state, user_id).await {
+        error!(?err, "failed to register websocket session");
+    }
+
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<ServerEvent>();
+
+    let writer_task = tokio::spawn(async move {
+        while let Some(event) = outbound_rx.recv().await {
+            let Ok(payload) = serde_json::to_string(&event) else {
+                continue;
+            };
+            if ws_sender.send(Message::Text(payload.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut chat_forward_task = if let Some(chat_id) = current_chat_id {
+        Some(spawn_chat_forwarder(&state, chat_id, outbound_tx.clone()).await)
+    } else {
+        None
+    };
+
+    let mut last_queue_snapshot: Option<(String, usize)> = None;
+    let mut status_ticker = interval(Duration::from_millis(1200));
+    let mut left_explicitly = false;
+
+    loop {
+        tokio::select! {
+            _ = status_ticker.tick() => {
+                if let Err(err) = set_session_presence(&state, user_id).await {
+                    error!(?err, "failed to refresh websocket session presence");
+                }
+
+                if current_chat_id.is_none() {
+                    if let Ok(Some(match_notice)) = queue::take_match_notification(&state, user_id).await {
+                        current_chat_id = Some(match_notice.chat_id);
+                    }
+                }
+
+                match queue::get_status(&state, user_id).await {
+                    Ok(QueueStatus::Queued { queue, position, .. }) => {
+                        if last_queue_snapshot.as_ref() != Some(&(queue.clone(), position)) {
+                            let _ = outbound_tx.send(ServerEvent::Queued { position, queue: queue.clone() });
+                            last_queue_snapshot = Some((queue, position));
+                        }
+                    }
+                    Ok(QueueStatus::Matched { chat_id }) => {
+                        if current_chat_id != Some(chat_id) {
+                            current_chat_id = Some(chat_id);
+                            if let Some(task) = chat_forward_task.take() {
+                                task.abort();
+                            }
+                            chat_forward_task = Some(spawn_chat_forwarder(&state, chat_id, outbound_tx.clone()).await);
+
+                            match resolve_partner_payload(&state, chat_id, user_id).await {
+                                Ok(partner) => {
+                                    let _ = outbound_tx.send(ServerEvent::Matched { chat_id, partner });
+                                }
+                                Err(err) => error!(?err, "failed to resolve partner payload"),
+                            }
+                            last_queue_snapshot = None;
+                        }
+                    }
+                    Ok(QueueStatus::Idle) => {
+                        last_queue_snapshot = None;
+                    }
+                    Err(err) => {
+                        error!(?err, "failed to read queue status");
+                    }
+                }
+            }
+            frame = ws_receiver.next() => {
+                let Some(frame) = frame else { break; };
+
+                match frame {
+                    Ok(Message::Text(text)) => {
+                        let event = match serde_json::from_str::<ClientEvent>(text.as_str()) {
+                            Ok(event) => event,
+                            Err(_) => {
+                                let _ = outbound_tx.send(ServerEvent::Error {
+                                    code: "BAD_EVENT".to_owned(),
+                                    message: "invalid websocket message: expected typed JSON payload".to_owned(),
+                                });
+                                continue;
+                            }
+                        };
+
+                        if matches!(event, ClientEvent::Auth { .. }) {
+                            let _ = outbound_tx.send(ServerEvent::Error {
+                                code: "BAD_EVENT".to_owned(),
+                                message: "already authenticated".to_owned(),
+                            });
+                            continue;
+                        }
+
+                        let Some(chat_id) = current_chat_id else {
+                            let _ = outbound_tx.send(ServerEvent::Error {
+                                code: "NOT_IN_CHAT".to_owned(),
+                                message: "no active chat yet".to_owned(),
+                            });
+                            continue;
+                        };
+
+                        match process_chat_event(&state, chat_id, user_id, event).await {
+                            Ok(should_leave) => {
+                                if should_leave {
+                                    left_explicitly = true;
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                error!(?err, "failed to process websocket event");
+                                let _ = outbound_tx.send(ServerEvent::Error {
+                                    code: "BAD_EVENT".to_owned(),
+                                    message: err.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => {}
+                    Err(err) => {
+                        error!(?err, "websocket read error");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    writer_task.abort();
+    if let Some(task) = chat_forward_task {
+        task.abort();
+    }
+
+    if let Some(chat_id) = current_chat_id {
+        if let Err(err) = finalize_chat(&state, chat_id, user_id).await {
+            error!(?err, "failed to finalize chat");
+        }
+    }
+
+    if let Err(err) = clear_session_presence(&state, user_id).await {
+        error!(?err, "failed to clear websocket session presence");
+    }
+
+    debug!(user_id = %user_id, left_explicitly, "websocket closed");
+}
+
+async fn authenticate_socket(
+    socket: &mut WebSocket,
+    state: &AppState,
+    pre_user_id: Option<Uuid>,
+    initial_chat_id: Option<Uuid>,
+) -> AppResult<(Uuid, Option<Uuid>)> {
+    if let Some(user_id) = pre_user_id {
+        return Ok((user_id, initial_chat_id));
+    }
+
+    let message = timeout(Duration::from_secs(15), socket.recv())
+        .await
+        .map_err(|_| AppError::Unauthorized("websocket auth timeout".to_owned()))?
+        .ok_or_else(|| AppError::Unauthorized("missing auth payload".to_owned()))?
+        .map_err(|_| AppError::Unauthorized("invalid auth frame".to_owned()))?;
+
+    let Message::Text(payload) = message else {
+        return Err(AppError::Unauthorized(
+            "first websocket payload must be auth text".to_owned(),
+        ));
+    };
+
+    if let Ok(ClientEvent::Auth { token, chat_id }) = serde_json::from_str::<ClientEvent>(payload.as_str()) {
+        let claims = verify_token(token.as_str(), &state.jwt)?;
+        let user_id = Uuid::parse_str(claims.sub.as_str())
+            .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+        let chat_id = chat_id.or(initial_chat_id);
+        if let Some(chat_id) = chat_id {
+            ensure_chat_member(state, chat_id, user_id).await?;
+        }
+        return Ok((user_id, chat_id));
+    }
+
+    let bootstrap = serde_json::from_str::<BootstrapEvent>(payload.as_str())
+        .map_err(|_| AppError::Unauthorized("invalid websocket auth payload".to_owned()))?;
+    let claims = verify_token(bootstrap.token.as_str(), &state.jwt)?;
+    let user_id = Uuid::parse_str(claims.sub.as_str())
+        .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+    let chat_id = bootstrap.chat_id.or(initial_chat_id);
+    if let Some(chat_id) = chat_id {
+        ensure_chat_member(state, chat_id, user_id).await?;
+    }
+    Ok((user_id, chat_id))
+}
+
+async fn spawn_chat_forwarder(
+    state: &AppState,
+    chat_id: Uuid,
+    outbound_tx: mpsc::UnboundedSender<ServerEvent>,
+) -> JoinHandle<()> {
+    let sender = state.chat_hub.sender_for(chat_id).await;
+    tokio::spawn(async move {
+        let mut broadcast_rx = sender.subscribe();
+        while let Ok(event) = broadcast_rx.recv().await {
+            let _ = outbound_tx.send(event);
+        }
+    })
+}
+
+async fn process_chat_event(
+    state: &AppState,
+    chat_id: Uuid,
+    user_id: Uuid,
+    event: ClientEvent,
+) -> AppResult<bool> {
+    match event {
+        ClientEvent::Message { content } => {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                return Ok(false);
+            }
+
+            let safety = safety::scan_message(state, chat_id, user_id, trimmed).await?;
+            let (content_encrypted, nonce) =
+                encryption::encrypt_for_chat(
+                    &state.db,
+                    chat_id,
+                    trimmed,
+                    &state.config.chat_key_encryption_key,
+                )
+                .await?;
+
+            let (message_id, created_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
+                r#"
+                INSERT INTO messages (chat_id, sender_id, content_encrypted, nonce, content_text)
+                VALUES ($1, $2, $3, $4, NULL)
+                RETURNING id, created_at
+                "#,
+            )
+            .bind(chat_id)
+            .bind(user_id)
+            .bind(content_encrypted)
+            .bind(nonce)
+            .fetch_one(&state.db)
+            .await?;
+
+            if safety.flagged {
+                sqlx::query(
+                    r#"
+                    INSERT INTO message_flags (message_id, user_id, reasons)
+                    VALUES ($1, $2, $3)
+                    "#,
+                )
+                .bind(message_id)
+                .bind(user_id)
+                .bind(serde_json::json!(safety.reasons))
+                .execute(&state.db)
+                .await?;
+            }
+
+            state
+                .chat_hub
+                .send(
+                    chat_id,
+                    ServerEvent::Message {
+                        id: message_id,
+                        chat_id,
+                        sender_id: user_id,
+                        content: trimmed.to_owned(),
+                        timestamp: created_at,
+                        flagged: safety.flagged,
+                    },
+                )
+                .await;
+        }
+        ClientEvent::Typing { is_typing } => {
+            state
+                .chat_hub
+                .send(chat_id, ServerEvent::Typing { user_id, is_typing })
+                .await;
+        }
+        ClientEvent::ReadReceipt { message_id } => {
+            sqlx::query(
+                r#"
+                UPDATE messages
+                SET is_read = TRUE
+                WHERE id = $1
+                "#,
+            )
+            .bind(message_id)
+            .execute(&state.db)
+            .await?;
+
+            state
+                .chat_hub
+                .send(
+                    chat_id,
+                    ServerEvent::ReadReceipt {
+                        message_id,
+                        reader_id: user_id,
+                    },
+                )
+                .await;
+        }
+        ClientEvent::KeepVote { keep } => {
+            let result = register_keep_vote(state, chat_id, user_id, keep).await?;
+            state
+                .chat_hub
+                .send(chat_id, ServerEvent::PartnerKeepVote)
+                .await;
+
+            if let Some(both_kept) = result {
+                state
+                    .chat_hub
+                    .send(chat_id, ServerEvent::KeepResult { both_kept })
+                    .await;
+            }
+        }
+        ClientEvent::Award {
+            award_type,
+            spark_amount,
+        } => {
+            let outcome = service::send_award_internal(
+                state,
+                user_id,
+                chat_id,
+                award_type.clone(),
+                spark_amount,
+            )
+            .await?;
+
+            state
+                .chat_hub
+                .send(
+                    chat_id,
+                    ServerEvent::AwardReceived {
+                        recipient_id: outcome.recipient_id,
+                        award_type,
+                        spark_amount,
+                        your_cut: outcome.recipient_cut,
+                    },
+                )
+                .await;
+        }
+        ClientEvent::Leave => return Ok(true),
+        ClientEvent::Auth { .. } => {
+            return Err(AppError::BadRequest("already authenticated".to_owned()));
+        }
+    }
+
+    Ok(false)
+}
+
+async fn ensure_chat_member(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResult<()> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid)>(
+        r#"
+        SELECT user_a_id, user_b_id
+        FROM chats
+        WHERE id = $1
+        "#,
+    )
+    .bind(chat_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
+
+    if row.0 != user_id && row.1 != user_id {
+        return Err(AppError::Forbidden(
+            "user is not a participant in this chat".to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
+async fn register_keep_vote(
+    state: &AppState,
+    chat_id: Uuid,
+    voter_id: Uuid,
+    keep: bool,
+) -> AppResult<Option<bool>> {
+    if keep {
+        let row = sqlx::query_as::<_, (bool, i32)>(
+            r#"
+            SELECT is_premium, keep_count
+            FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(voter_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
+
+        if !row.0 && row.1 >= 3 {
+            return Err(AppError::Conflict(
+                "free users can only keep 3 chats; upgrade to premium for unlimited keeps"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let (user_a_id, user_b_id, was_kept) = sqlx::query_as::<_, (Uuid, Uuid, bool)>(
+        r#"
+        SELECT user_a_id, user_b_id, is_kept
+        FROM chats
+        WHERE id = $1
+        "#,
+    )
+    .bind(chat_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
+
+    if voter_id != user_a_id && voter_id != user_b_id {
+        return Err(AppError::Forbidden("not a chat participant".to_owned()));
+    }
+
+    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let vote_key = keep_vote_key(chat_id, voter_id);
+    let _: () = conn
+        .set_ex(vote_key, if keep { "1" } else { "0" }, 2 * 60 * 60)
+        .await?;
+
+    let a_vote: Option<String> = conn.get(keep_vote_key(chat_id, user_a_id)).await?;
+    let b_vote: Option<String> = conn.get(keep_vote_key(chat_id, user_b_id)).await?;
+
+    let both_voted = a_vote.is_some() && b_vote.is_some();
+    if !both_voted {
+        return Ok(None);
+    }
+
+    let keep_a = a_vote.as_deref() == Some("1");
+    let keep_b = b_vote.as_deref() == Some("1");
+    let both_kept = keep_a && keep_b;
+
+    sqlx::query(
+        r#"
+        UPDATE chats
+        SET is_kept_by_a = $2, is_kept_by_b = $3
+        WHERE id = $1
+        "#,
+    )
+    .bind(chat_id)
+    .bind(keep_a)
+    .bind(keep_b)
+    .execute(&state.db)
+    .await?;
+
+    if both_kept && !was_kept {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET keep_count = keep_count + 1, updated_at = NOW()
+            WHERE id = ANY($1)
+            "#,
+        )
+        .bind(vec![user_a_id, user_b_id])
+        .execute(&state.db)
+        .await?;
+    }
+
+    let _: usize = conn.del(keep_vote_key(chat_id, user_a_id)).await?;
+    let _: usize = conn.del(keep_vote_key(chat_id, user_b_id)).await?;
+
+    Ok(Some(both_kept))
+}
+
+async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppResult<()> {
+    let participants = sqlx::query_as::<_, (Uuid, Uuid)>(
+        r#"
+        SELECT user_a_id, user_b_id
+        FROM chats
+        WHERE id = $1
+        "#,
+    )
+    .bind(chat_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some((user_a_id, user_b_id)) = participants else {
+        return Ok(());
+    };
+
+    let update_result = sqlx::query(
+        r#"
+        UPDATE chats
+        SET ended_at = NOW()
+        WHERE id = $1 AND ended_at IS NULL
+        "#,
+    )
+    .bind(chat_id)
+    .execute(&state.db)
+    .await?;
+
+    if update_result.rows_affected() == 0 {
+        return Ok(());
+    }
+
+    queue::end_chat_session(state, user_a_id, user_b_id).await?;
+
+    state
+        .chat_hub
+        .send(chat_id, ServerEvent::PartnerLeft { user_id: leaver_id })
+        .await;
+    state
+        .chat_hub
+        .send(
+            chat_id,
+            ServerEvent::Cooldown {
+                seconds: state.config.cooldown_seconds,
+            },
+        )
+        .await;
+
+    Ok(())
+}
+
+async fn resolve_partner_payload(
+    state: &AppState,
+    chat_id: Uuid,
+    requester_id: Uuid,
+) -> AppResult<serde_json::Value> {
+    let partner_id = queue::resolve_partner_for_chat(state, chat_id, requester_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
+
+    let partner = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+        r#"
+        SELECT id, username, bio, is_premium
+        FROM users
+        WHERE id = $1
+        "#,
+    )
+    .bind(partner_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let interest_slugs = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT c.slug
+        FROM user_interests ui
+        JOIN categories c ON c.id = ui.category_id
+        WHERE ui.user_id = $1
+        ORDER BY c.slug
+        "#,
+    )
+    .bind(partner_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let flare = sqlx::query_as::<_, (String, serde_json::Value)>(
+        r#"
+        SELECT fi.item_type, fi.asset_data
+        FROM user_flare uf
+        JOIN flare_items fi ON fi.id = uf.flare_item_id
+        WHERE uf.user_id = $1
+          AND uf.is_equipped = TRUE
+        "#,
+    )
+    .bind(partner_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let flare_map = flare.into_iter().fold(
+        serde_json::Map::new(),
+        |mut acc, (item_type, asset_data)| {
+            acc.insert(item_type, asset_data);
+            acc
+        },
+    );
+
+    if let Some((id, username, bio, is_premium)) = partner {
+        let badges = if is_premium { vec!["premium"] } else { vec![] };
+
+        return Ok(serde_json::json!({
+            "id": id,
+            "username": username,
+            "bio": bio,
+            "badges": badges,
+            "interests": interest_slugs,
+            "flare": flare_map
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "id": partner_id,
+        "username": "stranger",
+        "bio": "",
+        "badges": [],
+        "interests": [],
+        "flare": {}
+    }))
+}
+
+async fn set_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
+    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let ttl = state.config.queue_session_ttl_seconds;
+    let _: () = conn
+        .set_ex(format!("session:{user_id}"), "1", ttl)
+        .await?;
+    Ok(())
+}
+
+async fn clear_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
+    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let _: usize = conn.del(format!("session:{user_id}")).await?;
+    Ok(())
+}
+
+fn keep_vote_key(chat_id: Uuid, user_id: Uuid) -> String {
+    format!("keep_vote:{chat_id}:{user_id}")
+}

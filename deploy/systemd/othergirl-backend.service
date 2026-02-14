@@ -1,0 +1,16 @@
+[Unit]
+Description=Othergirl Backend (Axum)
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/othergirl/backend
+EnvironmentFile=/opt/othergirl/backend/.env
+ExecStart=/opt/othergirl/backend/target/release/othergirl-backend
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
