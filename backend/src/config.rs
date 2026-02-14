@@ -53,7 +53,7 @@ impl AppConfig {
         let public_api_base_url = env::var("PUBLIC_API_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:8080".to_owned());
         let public_web_base_url = env::var("PUBLIC_WEB_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:5173".to_owned());
+            .unwrap_or_else(|_| "http://localhost:3000".to_owned());
 
         Self {
             server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_owned()),

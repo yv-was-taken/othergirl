@@ -204,7 +204,7 @@ start_servers_tmux() {
   tmux select-layout -t "$TMUX_SESSION:dev" even-horizontal
 
   log "Backend:  http://localhost:8080"
-  log "Frontend: http://localhost:5173"
+  log "Frontend: http://localhost:3000"
   log "Attach with: tmux attach -t $TMUX_SESSION"
   log "Stop with:   tmux kill-session -t $TMUX_SESSION"
 
@@ -231,7 +231,7 @@ start_servers() {
   FRONTEND_PID=$!
 
   log "Backend:  http://localhost:8080"
-  log "Frontend: http://localhost:5173"
+  log "Frontend: http://localhost:3000"
   log "Press Ctrl+C to stop both dev servers."
 }
 

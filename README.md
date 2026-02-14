@@ -59,7 +59,7 @@ bun run dev
 
 Default URLs:
 
-- Frontend: `http://localhost:5173`
+- Frontend: `http://localhost:3000`
 - Backend: `http://localhost:8080`
 
 ### One-command local dev
