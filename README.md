@@ -62,6 +62,25 @@ Default URLs:
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8080`
 
+### One-command local dev
+
+From repo root:
+
+```bash
+./dev.sh
+```
+
+`dev.sh` will:
+
+- ensure Docker daemon is running,
+- start/create local PostgreSQL and Redis containers,
+- create missing `backend/.env` and `frontend/.env` from examples,
+- install frontend deps (if needed),
+- run backend (`cargo run`) and frontend (`bun run dev`) together.
+
+If `tmux` is installed, it starts them in two panes of the same tmux window by default for split live logging.
+Use `./dev.sh --no-tmux` to force single-terminal mode.
+
 ## Checks
 
 Backend:
