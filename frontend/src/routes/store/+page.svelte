@@ -123,23 +123,23 @@
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Flare Store</h1>
-    <span class="rounded-xl bg-white/10 px-3 py-1 text-sm text-slate-200">{balance} sparks</span>
+    <span class="rounded-xl bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-secondary)]">{balance} sparks</span>
   </div>
 
   <FlarePreview />
 
   {#if !$auth.user}
-    <div class="surface p-4 text-slate-300">Login to use the store.</div>
+    <div class="surface p-4 text-[var(--text-secondary)]">Login to use the store.</div>
   {:else if items.length === 0}
-    <div class="surface p-4 text-slate-300">No store items available.</div>
+    <div class="surface p-4 text-[var(--text-secondary)]">No store items available.</div>
   {:else}
     <div class="grid gap-3 md:grid-cols-2">
       {#each items as item}
         <div class="surface space-y-2 p-4">
           <p class="font-semibold">{item.name}</p>
-          <p class="text-sm text-slate-300">{item.description}</p>
-          <p class="text-xs text-slate-400">{item.item_type} • {item.rarity}</p>
-          <p class="text-sm text-slate-300">{item.price_sparks} sparks</p>
+          <p class="text-sm text-[var(--text-secondary)]">{item.description}</p>
+          <p class="text-xs text-[var(--text-muted)]">{item.item_type} • {item.rarity}</p>
+          <p class="text-sm text-[var(--text-secondary)]">{item.price_sparks} sparks</p>
 
           {#if isOwned(item.id)}
             <button class="btn-secondary w-full" onclick={() => toggleEquip(item.id)} disabled={loading}>
@@ -155,19 +155,19 @@
     <div class="surface space-y-3 p-4">
       <h2 class="text-lg font-semibold">Custom Emotes</h2>
       {#if emotes.length === 0}
-        <p class="text-sm text-slate-300">No emotes listed.</p>
+        <p class="text-sm text-[var(--text-secondary)]">No emotes listed.</p>
       {:else}
         <div class="grid gap-3 md:grid-cols-2">
           {#each emotes as emote}
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-3">
+            <div class="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-overlay)] p-3">
               <div class="mb-2 flex items-center gap-3">
                 <img src={emote.image_url} alt={emote.token} class="h-8 w-8 rounded" />
                 <div>
                   <p class="font-semibold">{emote.name}</p>
-                  <p class="text-xs text-slate-400">{emote.token}</p>
+                  <p class="text-xs text-[var(--text-muted)]">{emote.token}</p>
                 </div>
               </div>
-              <p class="text-sm text-slate-300">{emote.price_sparks} sparks</p>
+              <p class="text-sm text-[var(--text-secondary)]">{emote.price_sparks} sparks</p>
               {#if ownedEmoteIds.includes(emote.id)}
                 <button class="btn-secondary mt-2 w-full" disabled>Owned</button>
               {:else}

@@ -70,10 +70,10 @@
 </script>
 
 <div class="surface flex h-[72vh] flex-col">
-  <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
+  <div class="flex items-center justify-between border-b border-[var(--border-default)] px-4 py-3">
     <div>
       <h2 class="font-semibold">Active Chat</h2>
-      <p class="text-xs text-slate-400">with {partnerName}</p>
+      <p class="text-xs text-[var(--text-muted)]">with {partnerName}</p>
     </div>
     <div class="flex items-center gap-2">
       <button class="btn-secondary" onclick={() => onkeepvote?.({ keep: true })} disabled={!connected}>Keep</button>
@@ -89,7 +89,7 @@
         {connectionError}
       </div>
     {:else if messages.length === 0}
-      <p class="text-sm text-slate-400">No messages yet. Say hi.</p>
+      <p class="text-sm text-[var(--text-muted)]">No messages yet. Say hi.</p>
     {/if}
 
     {#each messages as message (message.id)}
@@ -97,7 +97,7 @@
     {/each}
   </div>
 
-  <div class="border-t border-white/10 px-4 py-3">
+  <div class="border-t border-[var(--border-default)] px-4 py-3">
     <TypingIndicator isTyping={partnerTyping} />
 
     <div class="mt-2 flex items-center gap-2">
@@ -113,7 +113,7 @@
         <button
           bind:this={emoteBtn}
           type="button"
-          class="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+          class="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
           onclick={() => (emotePickerOpen = !emotePickerOpen)}
           disabled={!connected}
         >

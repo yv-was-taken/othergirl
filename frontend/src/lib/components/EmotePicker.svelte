@@ -51,7 +51,7 @@
 {#if open}
   <div
     bind:this={pickerEl}
-    class="absolute bottom-full left-0 z-20 mb-2 w-80 rounded-xl border border-white/10 bg-slate-900/95 p-3 shadow-xl backdrop-blur"
+    class="absolute bottom-full left-0 z-20 mb-2 w-80 rounded-xl border border-[var(--border-default)] bg-[var(--bg-popover)] p-3 shadow-xl backdrop-blur"
   >
     <input
       class="input mb-2 w-full text-sm"
@@ -61,13 +61,13 @@
 
     <div class="max-h-52 overflow-y-auto">
       {#if filtered.length === 0}
-        <p class="py-4 text-center text-xs text-slate-500">No emotes found</p>
+        <p class="py-4 text-center text-xs text-[var(--text-muted)]">No emotes found</p>
       {:else}
         <div class="grid grid-cols-8 gap-1">
           {#each filtered as emote (emote.token)}
             <button
               type="button"
-              class="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-white/10"
+              class="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-[var(--bg-elevated)]"
               title={emote.name}
               onclick={() => select(emote.token)}
             >

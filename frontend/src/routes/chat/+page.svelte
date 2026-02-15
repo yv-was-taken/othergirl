@@ -310,7 +310,7 @@
 
 {#if !$auth.user}
   <div class="surface p-6 text-center">
-    <p class="text-slate-300">You need an account to start chatting.</p>
+    <p class="text-[var(--text-secondary)]">You need an account to start chatting.</p>
     <a class="btn-primary mt-4" href="/login">Go to login</a>
   </div>
 {:else}

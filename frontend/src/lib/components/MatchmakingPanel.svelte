@@ -26,7 +26,7 @@
   <h2 class="text-lg font-semibold">Matchmaking</h2>
 
   <div>
-    <label for="category-select" class="mb-1 block text-xs uppercase tracking-wide text-slate-400">Category</label>
+    <label for="category-select" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Category</label>
     <select id="category-select" class="input" bind:value={selectedCategory}>
       {#if categories.length === 0}
         <option value="">No categories</option>
@@ -39,7 +39,7 @@
   </div>
 
   <div>
-    <label for="language-select" class="mb-1 block text-xs uppercase tracking-wide text-slate-400">Language</label>
+    <label for="language-select" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Language</label>
     <select id="language-select" class="input" bind:value={selectedLanguage}>
       {#if languages.length === 0}
         <option value="">No languages</option>
@@ -52,7 +52,7 @@
   </div>
 
   {#if queued}
-    <div class="rounded-xl bg-white/5 p-3 text-sm text-slate-300">
+    <div class="rounded-xl bg-[var(--bg-overlay)] p-3 text-sm text-[var(--text-secondary)]">
       Queue position: {queuePosition ?? '-'}
       <br />
       Estimated wait: {queueWaitSeconds ?? '-'}s

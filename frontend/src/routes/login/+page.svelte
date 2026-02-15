@@ -111,14 +111,14 @@
     <div class="flex gap-2">
       <button
         type="button"
-        class={`btn-secondary flex-1 ${mode === 'login' ? 'bg-white/20' : ''}`}
+        class={`btn-secondary flex-1 ${mode === 'login' ? 'bg-[var(--btn-secondary-hover)]' : ''}`}
         onclick={() => (mode = 'login')}
       >
         Login
       </button>
       <button
         type="button"
-        class={`btn-secondary flex-1 ${mode === 'register' ? 'bg-white/20' : ''}`}
+        class={`btn-secondary flex-1 ${mode === 'register' ? 'bg-[var(--btn-secondary-hover)]' : ''}`}
         onclick={() => (mode = 'register')}
       >
         Register
@@ -128,23 +128,23 @@
     <form class="space-y-3" onsubmit={(e) => { e.preventDefault(); submit(); }}>
       {#if mode === 'register'}
         <div>
-          <label for="username-input" class="mb-1 block text-xs uppercase tracking-wide text-slate-400">Username</label>
+          <label for="username-input" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Username</label>
           <input id="username-input" class="input" bind:value={username} required minlength={3} maxlength={32} />
         </div>
       {/if}
 
       <div>
-        <label for="email-input" class="mb-1 block text-xs uppercase tracking-wide text-slate-400">Email</label>
+        <label for="email-input" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Email</label>
         <input id="email-input" class="input" bind:value={email} required type="email" />
       </div>
 
       <div>
-        <label for="password-input" class="mb-1 block text-xs uppercase tracking-wide text-slate-400">Password</label>
+        <label for="password-input" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Password</label>
         <input id="password-input" class="input" bind:value={password} required type="password" minlength={8} />
       </div>
 
       {#if mode === 'register'}
-        <label class="flex items-center gap-2 text-sm text-slate-300">
+        <label class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
           <input type="checkbox" bind:checked={isAgeVerified} />
           I confirm I am 18+
         </label>
@@ -156,7 +156,7 @@
     </form>
 
     <div class="space-y-2">
-      <p class="text-center text-xs uppercase tracking-wide text-slate-400">or continue with OAuth</p>
+      <p class="text-center text-xs uppercase tracking-wide text-[var(--text-muted)]">or continue with OAuth</p>
       <div class="grid grid-cols-2 gap-2">
         {#each oauthProviders as provider}
           <button type="button" class="btn-secondary" disabled={loading} onclick={() => oauthLogin(provider)}>

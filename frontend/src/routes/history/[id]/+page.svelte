@@ -46,9 +46,9 @@
   </div>
 
   {#if loading}
-    <div class="surface p-4 text-slate-300">Loading...</div>
+    <div class="surface p-4 text-[var(--text-secondary)]">Loading...</div>
   {:else if messages.length === 0}
-    <div class="surface p-4 text-slate-300">No messages in this chat.</div>
+    <div class="surface p-4 text-[var(--text-secondary)]">No messages in this chat.</div>
   {:else}
     <div class="surface space-y-3 p-4">
       {#each messages as message (message.id)}

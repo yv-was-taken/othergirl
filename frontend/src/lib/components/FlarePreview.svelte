@@ -11,9 +11,9 @@
 </script>
 
 <div class="surface p-4">
-  <p class="mb-2 text-xs uppercase tracking-wide text-slate-400">Flare preview</p>
+  <p class="mb-2 text-xs uppercase tracking-wide text-[var(--text-muted)]">Flare preview</p>
   <p class="text-sm" style={`color:${color}`}>{username}</p>
-  <div class={`mt-2 rounded-xl p-3 text-sm ${bubbleTheme === 'midnight' ? 'bg-slate-900 text-slate-100' : 'bg-white/10 text-slate-100'}`}>
+  <div class={`mt-2 rounded-xl p-3 text-sm ${bubbleTheme === 'midnight' ? 'bg-[var(--bg-elevated)]' : 'bg-[var(--bg-overlay)]'}`}>
     Your message bubble theme preview.
   </div>
 </div>

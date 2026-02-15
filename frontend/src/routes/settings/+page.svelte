@@ -149,12 +149,12 @@
   <h1 class="text-2xl font-bold">Settings</h1>
 
   {#if !$auth.user}
-    <div class="surface p-4 text-slate-300">Login to manage your account settings.</div>
+    <div class="surface p-4 text-[var(--text-secondary)]">Login to manage your account settings.</div>
   {:else}
     <div class="grid gap-4 lg:grid-cols-2">
       <div class="surface space-y-3 p-5">
         <h2 class="text-lg font-semibold">Premium</h2>
-        <p class="text-sm text-slate-300">
+        <p class="text-sm text-[var(--text-secondary)]">
           Status: {$auth.user.is_premium ? 'Premium active' : 'Free tier'}
         </p>
         <button class="btn-primary" onclick={subscribe}>Activate Premium</button>
@@ -162,7 +162,7 @@
 
       <div class="surface space-y-3 p-5">
         <h2 class="text-lg font-semibold">Sparks</h2>
-        <p class="text-sm text-slate-300">Current balance: {balance}</p>
+        <p class="text-sm text-[var(--text-secondary)]">Current balance: {balance}</p>
         <input class="input" type="number" min="1" bind:value={buyAmount} />
         <div class="flex gap-2">
           <button class="btn-primary flex-1" onclick={buySparks}>Buy (Stripe)</button>
@@ -172,10 +172,10 @@
       <div class="surface space-y-3 p-5">
         <h2 class="text-lg font-semibold">Cash Out</h2>
         {#if connectStatus}
-          <p class="text-sm text-slate-300">Connected: {connectStatus.stripe_account_id}</p>
-          <p class="text-sm text-slate-300">Payouts enabled: {connectStatus.payouts_enabled ? 'Yes' : 'No'}</p>
+          <p class="text-sm text-[var(--text-secondary)]">Connected: {connectStatus.stripe_account_id}</p>
+          <p class="text-sm text-[var(--text-secondary)]">Payouts enabled: {connectStatus.payouts_enabled ? 'Yes' : 'No'}</p>
         {:else}
-          <p class="text-sm text-slate-300">No cashout account linked.</p>
+          <p class="text-sm text-[var(--text-secondary)]">No cashout account linked.</p>
         {/if}
         <button class="btn-secondary" onclick={connectCashout}>Link cashout account</button>
         <input class="input" type="number" min="1000" bind:value={cashoutAmount} />
@@ -185,14 +185,14 @@
       <div class="surface space-y-3 p-5">
         <h2 class="text-lg font-semibold">Recent Transactions</h2>
         {#if transactions.length === 0}
-          <p class="text-sm text-slate-300">No transactions yet.</p>
+          <p class="text-sm text-[var(--text-secondary)]">No transactions yet.</p>
         {:else}
           <div class="space-y-2">
             {#each transactions.slice(0, 10) as tx}
-              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+              <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-overlay)] p-3 text-sm">
                 <p class="font-semibold">{tx.transaction_type}</p>
-                <p class="text-slate-300">{tx.amount > 0 ? '+' : ''}{tx.amount}</p>
-                <p class="text-xs text-slate-400">{new Date(tx.created_at).toLocaleString()}</p>
+                <p class="text-[var(--text-secondary)]">{tx.amount > 0 ? '+' : ''}{tx.amount}</p>
+                <p class="text-xs text-[var(--text-muted)]">{new Date(tx.created_at).toLocaleString()}</p>
               </div>
             {/each}
           </div>
@@ -202,13 +202,13 @@
       <div class="surface space-y-3 p-5 lg:col-span-2">
         <h2 class="text-lg font-semibold">Blocked Users</h2>
         {#if blockedUsers.length === 0}
-          <p class="text-sm text-slate-300">No blocked users.</p>
+          <p class="text-sm text-[var(--text-secondary)]">No blocked users.</p>
         {:else}
           <div class="grid gap-2 md:grid-cols-2">
             {#each blockedUsers as blocked}
-              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+              <div class="rounded-xl border border-[var(--border-default)] bg-[var(--bg-overlay)] p-3 text-sm">
                 <p class="font-semibold">{blocked.username}</p>
-                <p class="text-xs text-slate-400">{new Date(blocked.created_at).toLocaleString()}</p>
+                <p class="text-xs text-[var(--text-muted)]">{new Date(blocked.created_at).toLocaleString()}</p>
                 <button class="btn-secondary mt-2" onclick={() => unblock(blocked.id)}>Unblock</button>
               </div>
             {/each}
@@ -218,7 +218,7 @@
 
       <div class="surface space-y-3 p-5 lg:col-span-2">
         <h2 class="text-lg font-semibold">Admin Emote Upload</h2>
-        <p class="text-sm text-slate-300">Requires your user ID in backend `ADMIN_USER_IDS`.</p>
+        <p class="text-sm text-[var(--text-secondary)]">Requires your user ID in backend `ADMIN_USER_IDS`.</p>
         <div class="grid gap-2 md:grid-cols-3">
           <input class="input" bind:value={emoteToken} placeholder=":my_emote:" />
           <input class="input" bind:value={emoteName} placeholder="Emote name" />

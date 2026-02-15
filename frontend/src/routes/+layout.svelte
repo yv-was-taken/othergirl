@@ -1,6 +1,7 @@
 <script lang="ts">
   import { type Snippet } from 'svelte';
   import '../app.css';
+  import '$lib/stores/theme';
   import { Toaster } from 'svelte-sonner';
 
   import Navbar from '$lib/components/Navbar.svelte';

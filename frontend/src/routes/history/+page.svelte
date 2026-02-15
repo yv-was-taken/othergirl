@@ -38,7 +38,7 @@
     <h1 class="text-2xl font-bold">Chat History</h1>
     <div class="flex gap-2">
       <button
-        class={`btn-secondary ${!keepOnly ? 'bg-white/20' : ''}`}
+        class={`btn-secondary ${!keepOnly ? 'bg-[var(--btn-secondary-hover)]' : ''}`}
         onclick={() => {
           keepOnly = false;
           loadHistory();
@@ -46,7 +46,7 @@
         disabled={loading}
       >All</button>
       <button
-        class={`btn-secondary ${keepOnly ? 'bg-white/20' : ''}`}
+        class={`btn-secondary ${keepOnly ? 'bg-[var(--btn-secondary-hover)]' : ''}`}
         onclick={() => {
           keepOnly = true;
           loadHistory();
@@ -58,16 +58,16 @@
   </div>
 
   {#if !$auth.user}
-    <div class="surface p-5 text-slate-300">Login to view history.</div>
+    <div class="surface p-5 text-[var(--text-secondary)]">Login to view history.</div>
   {:else if chats.length === 0}
-    <div class="surface p-5 text-slate-300">No chats yet.</div>
+    <div class="surface p-5 text-[var(--text-secondary)]">No chats yet.</div>
   {:else}
     <div class="space-y-2">
       {#each chats as chat}
-        <a href={`/history/${chat.id}`} class="surface block p-4 transition hover:bg-white/10">
+        <a href={`/history/${chat.id}`} class="surface block p-4 transition hover:bg-[var(--bg-elevated)]">
           <div class="flex items-center justify-between">
             <p class="font-semibold">{chat.partner_username}</p>
-            <p class="text-xs text-slate-400">{new Date(chat.started_at).toLocaleString()}</p>
+            <p class="text-xs text-[var(--text-muted)]">{new Date(chat.started_at).toLocaleString()}</p>
           </div>
         </a>
       {/each}
