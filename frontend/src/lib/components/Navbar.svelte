@@ -12,9 +12,7 @@
 
 <nav class="sticky top-0 z-20 border-b border-white/10 bg-slate-950/70 backdrop-blur">
   <div class="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3">
-    <a href="/"><img src="/assets/othergirl-logo-transparent.png" alt="Othergirl" class="h-8" /></a>
-
-    <div class="hidden items-center gap-4 md:flex">
+    <div class="hidden items-center gap-6 md:flex">
       {#each links as link}
         <a href={link.href} class="text-sm text-slate-300 transition hover:text-white">{link.label}</a>
       {/each}

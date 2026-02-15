@@ -1,8 +1,8 @@
-<section class="grid gap-8 py-12 md:grid-cols-2 md:items-center">
-  <div class="space-y-5">
-    <p class="inline-flex rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs uppercase tracking-wide text-slate-300">
-      Privacy-first random chat
-    </p>
+<section class="py-12">
+  <div class="space-y-5 max-w-xl">
+    <div class="relative w-[340px] h-[75px] overflow-hidden">
+      <img src="/assets/othergirl-logo-transparent.png" alt="Othergirl" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[340px] h-[340px] object-contain" />
+    </div>
     <h1 class="text-4xl font-black leading-tight md:text-5xl">Meet strangers by interest, not profile.</h1>
     <p class="text-lg text-slate-300">
       Othergirl pairs you into 1:1 text chats by category and language. Keep the rare good conversation, skip the rest.
@@ -11,15 +11,5 @@
       <a href="/chat" class="btn-primary">Start Chatting</a>
       <a href="/login" class="btn-secondary">Create Account</a>
     </div>
-  </div>
-
-  <div class="surface space-y-3 p-6">
-    <h2 class="text-xl font-semibold text-white">What works today</h2>
-    <ul class="space-y-2 text-sm text-slate-300">
-      <li>Register and login with email/password</li>
-      <li>Queue and match in Casual + English</li>
-      <li>Live WebSocket text chat with typing/read receipts</li>
-      <li>Leave, cooldown, and history retrieval</li>
-    </ul>
   </div>
 </section>
