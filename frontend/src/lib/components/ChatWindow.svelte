@@ -1,6 +1,9 @@
 <script lang="ts">
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import TypingIndicator from '$lib/components/TypingIndicator.svelte';
+  import EmotePicker from '$lib/components/EmotePicker.svelte';
+  import { Smile } from 'lucide-svelte';
+  import { tick } from 'svelte';
 
   let {
     messages = [],
@@ -32,6 +35,20 @@
 
   let draft = $state('');
   let sparkAmount = $state(100);
+  let emotePickerOpen = $state(false);
+  let inputEl: HTMLInputElement | undefined = $state();
+  let emoteBtn: HTMLButtonElement | undefined = $state();
+
+  async function insertEmote(token: string) {
+    if (!inputEl) return;
+    const start = inputEl.selectionStart ?? draft.length;
+    const end = inputEl.selectionEnd ?? draft.length;
+    draft = draft.slice(0, start) + token + draft.slice(end);
+    const cursor = start + token.length;
+    await tick();
+    inputEl.focus();
+    inputEl.setSelectionRange(cursor, cursor);
+  }
 
   function submitMessage() {
     const content = draft.trim();
@@ -92,7 +109,20 @@
       class="mt-2 flex items-center gap-2"
       onsubmit={(e) => { e.preventDefault(); submitMessage(); }}
     >
+      <div class="relative">
+        <button
+          bind:this={emoteBtn}
+          type="button"
+          class="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+          onclick={() => (emotePickerOpen = !emotePickerOpen)}
+          disabled={!connected}
+        >
+          <Smile size={20} />
+        </button>
+        <EmotePicker bind:open={emotePickerOpen} onselect={insertEmote} anchorEl={emoteBtn} />
+      </div>
       <input
+        bind:this={inputEl}
         class="input"
         placeholder={connected ? 'Type a message...' : 'Connect to a chat first'}
         bind:value={draft}

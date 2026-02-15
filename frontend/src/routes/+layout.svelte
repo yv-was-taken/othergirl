@@ -1,16 +1,11 @@
 <script lang="ts">
-  import { onMount, type Snippet } from 'svelte';
+  import { type Snippet } from 'svelte';
   import '../app.css';
   import { Toaster } from 'svelte-sonner';
 
   import Navbar from '$lib/components/Navbar.svelte';
-  import { loadEmotes } from '$lib/utils/emotes';
 
   let { children }: { children: Snippet } = $props();
-
-  onMount(() => {
-    loadEmotes();
-  });
 </script>
 
 <Navbar />
