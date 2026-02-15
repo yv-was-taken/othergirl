@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-50: #fff4ee;
-  --color-brand-100: #ffe2d2;
-  --color-brand-200: #ffc2a7;
-  --color-brand-300: #ff9a72;
-  --color-brand-400: #ff6b35;
-  --color-brand-500: #e8541f;
-  --color-brand-600: #bf3e12;
-  --color-brand-700: #962f0f;
-  --color-brand-800: #76280f;
-  --color-brand-900: #5f220f;
+  --color-brand-50:  #fafafa;
+  --color-brand-100: #f0f0f2;
+  --color-brand-200: #d4d4da;
+  --color-brand-300: #a8a8b3;
+  --color-brand-400: #787885;
+  --color-brand-500: #5c5c66;
+  --color-brand-600: #47474f;
+  --color-brand-700: #36363c;
+  --color-brand-800: #28282c;
+  --color-brand-900: #1c1c1f;
 
-  --shadow-glow: 0 0 0 1px rgba(255, 107, 53, 0.25), 0 8px 24px rgba(0, 0, 0, 0.24);
+  --shadow-glow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.24);
 }
 
 :root {
@@ -33,7 +33,7 @@ body {
 }
 
 .btn-primary {
-  @apply btn bg-brand-400 text-white hover:bg-brand-300;
+  @apply btn bg-white text-slate-900 hover:bg-slate-200;
 }
 
 .btn-secondary {
@@ -41,5 +41,5 @@ body {
 }
 
 .input {
-  @apply w-full rounded-xl border border-white/15 bg-slate-900/70 px-3 py-2 text-white outline-none ring-brand-400/60 transition focus:ring-2;
+  @apply w-full rounded-xl border border-white/15 bg-slate-900/70 px-3 py-2 text-white outline-none ring-white/60 transition focus:ring-2;
 }

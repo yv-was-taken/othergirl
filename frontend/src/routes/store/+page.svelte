@@ -123,7 +123,7 @@
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Flare Store</h1>
-    <span class="rounded-xl bg-brand-300/20 px-3 py-1 text-sm text-brand-100">{balance} sparks</span>
+    <span class="rounded-xl bg-white/10 px-3 py-1 text-sm text-slate-200">{balance} sparks</span>
   </div>
 
   <FlarePreview />
@@ -139,7 +139,7 @@
           <p class="font-semibold">{item.name}</p>
           <p class="text-sm text-slate-300">{item.description}</p>
           <p class="text-xs text-slate-400">{item.item_type} • {item.rarity}</p>
-          <p class="text-sm text-brand-200">{item.price_sparks} sparks</p>
+          <p class="text-sm text-slate-300">{item.price_sparks} sparks</p>
 
           {#if isOwned(item.id)}
             <button class="btn-secondary w-full" onclick={() => toggleEquip(item.id)} disabled={loading}>
@@ -167,7 +167,7 @@
                   <p class="text-xs text-slate-400">{emote.token}</p>
                 </div>
               </div>
-              <p class="text-sm text-brand-200">{emote.price_sparks} sparks</p>
+              <p class="text-sm text-slate-300">{emote.price_sparks} sparks</p>
               {#if ownedEmoteIds.includes(emote.id)}
                 <button class="btn-secondary mt-2 w-full" disabled>Owned</button>
               {:else}

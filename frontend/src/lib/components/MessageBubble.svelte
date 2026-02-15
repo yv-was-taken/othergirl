@@ -15,7 +15,7 @@
   const rendered = $derived(applyEmotes(renderMarkdown(message.content)));
 </script>
 
-<div class={`max-w-[85%] rounded-2xl px-4 py-2 text-sm shadow ${mine ? 'ml-auto bg-brand-400 text-white' : 'bg-white/10 text-slate-100'}`}>
+<div class={`max-w-[85%] rounded-2xl px-4 py-2 text-sm shadow ${mine ? 'ml-auto bg-white/15 text-slate-100' : 'bg-white/10 text-slate-100'}`}>
   <div class="prose prose-sm prose-invert max-w-none leading-relaxed">{@html rendered}</div>
   <div class={`mt-1 text-[11px] ${mine ? 'text-white/80' : 'text-slate-400'}`}>
     {new Date(message.timestamp).toLocaleTimeString()}

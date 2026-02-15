@@ -19,7 +19,7 @@
   <p class="text-sm text-slate-300">{bio || 'No bio yet.'}</p>
   <div class="flex flex-wrap gap-2">
     {#each badges as badge}
-      <span class="rounded-full bg-brand-400/20 px-2 py-1 text-xs text-brand-200">{badge}</span>
+      <span class="rounded-full bg-white/10 px-2 py-1 text-xs text-slate-200">{badge}</span>
     {/each}
   </div>
 

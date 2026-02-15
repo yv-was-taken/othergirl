@@ -118,7 +118,7 @@
             <button
               class={`rounded-xl border px-3 py-2 text-left text-sm transition ${
                 selectedInterests.includes(category.id)
-                  ? 'border-brand-300/80 bg-brand-300/20 text-brand-100'
+                  ? 'border-white/40 bg-white/15 text-white'
                   : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
               }`}
               onclick={() => toggleInterest(category.id)}

@@ -1,7 +1,7 @@
 <script lang="ts">
   let {
     username = 'othergirl',
-    color = '#ff6b35',
+    color = '#a8a8b3',
     bubbleTheme = 'default'
   }: {
     username?: string;

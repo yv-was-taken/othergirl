@@ -1,6 +1,6 @@
 <section class="grid gap-8 py-12 md:grid-cols-2 md:items-center">
   <div class="space-y-5">
-    <p class="inline-flex rounded-full border border-brand-300/40 bg-brand-300/10 px-3 py-1 text-xs uppercase tracking-wide text-brand-200">
+    <p class="inline-flex rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs uppercase tracking-wide text-slate-300">
       Privacy-first random chat
     </p>
     <h1 class="text-4xl font-black leading-tight md:text-5xl">Meet strangers by interest, not profile.</h1>
@@ -14,7 +14,7 @@
   </div>
 
   <div class="surface space-y-3 p-6">
-    <h2 class="text-xl font-semibold text-brand-200">What works today</h2>
+    <h2 class="text-xl font-semibold text-white">What works today</h2>
     <ul class="space-y-2 text-sm text-slate-300">
       <li>Register and login with email/password</li>
       <li>Queue and match in Casual + English</li>
