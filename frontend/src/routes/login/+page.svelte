@@ -106,7 +106,7 @@
 </script>
 
 <section class="mx-auto max-w-xl">
-  <img src="/assets/othergirl-logo.png" alt="Othergirl" class="mx-auto mb-6 h-16" />
+  <img src="/assets/othergirl-logo-transparent.png" alt="Othergirl" class="mx-auto mb-6 h-16" />
   <div class="surface space-y-5 p-6">
     <div class="flex gap-2">
       <button
