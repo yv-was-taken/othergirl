@@ -168,9 +168,7 @@ pub async fn ws_handler(
         None
     };
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_socket(socket, state, pre_user_id, params.chat_id)
-    }))
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state, pre_user_id, params.chat_id)))
 }
 
 async fn handle_socket(
@@ -179,36 +177,28 @@ async fn handle_socket(
     pre_user_id: Option<Uuid>,
     initial_chat_id: Option<Uuid>,
 ) {
-    let (user_id, mut current_chat_id) = match authenticate_socket(
-        &mut socket,
-        &state,
-        pre_user_id,
-        initial_chat_id,
-    )
-    .await
-    {
-        Ok(data) => data,
-        Err(err) => {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::to_string(&AuthResponse::Failed {
-                        code: "UNAUTHORIZED".to_owned(),
-                        message: err.to_string(),
-                    })
-                    .unwrap()
-                    .into(),
-                ))
-                .await;
-            let _ = socket.close().await;
-            return;
-        }
-    };
+    let (user_id, mut current_chat_id) =
+        match authenticate_socket(&mut socket, &state, pre_user_id, initial_chat_id).await {
+            Ok(data) => data,
+            Err(err) => {
+                let _ = socket
+                    .send(Message::Text(
+                        serde_json::to_string(&AuthResponse::Failed {
+                            code: "UNAUTHORIZED".to_owned(),
+                            message: err.to_string(),
+                        })
+                        .unwrap()
+                        .into(),
+                    ))
+                    .await;
+                let _ = socket.close().await;
+                return;
+            }
+        };
 
     let _ = socket
         .send(Message::Text(
-            serde_json::to_string(&AuthResponse::Ok)
-                .unwrap()
-                .into(),
+            serde_json::to_string(&AuthResponse::Ok).unwrap().into(),
         ))
         .await;
 
@@ -384,7 +374,9 @@ async fn authenticate_socket(
         ));
     };
 
-    if let Ok(ClientEvent::Auth { token, chat_id }) = serde_json::from_str::<ClientEvent>(payload.as_str()) {
+    if let Ok(ClientEvent::Auth { token, chat_id }) =
+        serde_json::from_str::<ClientEvent>(payload.as_str())
+    {
         let claims = verify_token(token.as_str(), &state.jwt)?;
         let user_id = Uuid::parse_str(claims.sub.as_str())
             .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
@@ -435,14 +427,13 @@ async fn process_chat_event(
             }
 
             let safety = safety::scan_message(state, chat_id, user_id, trimmed).await?;
-            let (content_encrypted, nonce) =
-                encryption::encrypt_for_chat(
-                    &state.db,
-                    chat_id,
-                    trimmed,
-                    &state.config.chat_key_encryption_key,
-                )
-                .await?;
+            let (content_encrypted, nonce) = encryption::encrypt_for_chat(
+                &state.db,
+                chat_id,
+                trimmed,
+                &state.config.chat_key_encryption_key,
+            )
+            .await?;
 
             let (message_id, created_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
                 r#"
@@ -810,9 +801,7 @@ async fn resolve_partner_payload(
 async fn set_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let ttl = state.config.queue_session_ttl_seconds;
-    let _: () = conn
-        .set_ex(format!("session:{user_id}"), "1", ttl)
-        .await?;
+    let _: () = conn.set_ex(format!("session:{user_id}"), "1", ttl).await?;
     Ok(())
 }
 
