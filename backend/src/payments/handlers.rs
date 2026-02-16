@@ -108,9 +108,7 @@ pub async fn subscribe(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session
-        .url
-        .ok_or_else(|| AppError::Internal)?;
+    let checkout_url = session.url.ok_or_else(|| AppError::Internal)?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -160,10 +158,7 @@ pub async fn buy_sparks(
             "metadata[user_id]".to_owned(),
             auth_user.user_id.to_string(),
         ),
-        (
-            "metadata[purchase_type]".to_owned(),
-            "sparks".to_owned(),
-        ),
+        ("metadata[purchase_type]".to_owned(), "sparks".to_owned()),
         (
             "metadata[sparks_amount]".to_owned(),
             payload.amount.to_string(),
@@ -186,9 +181,7 @@ pub async fn buy_sparks(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session
-        .url
-        .ok_or_else(|| AppError::Internal)?;
+    let checkout_url = session.url.ok_or_else(|| AppError::Internal)?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -204,11 +197,10 @@ pub async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<serde_json::Value>> {
-    let webhook_secret = state
-        .config
-        .stripe_webhook_secret
-        .clone()
-        .ok_or_else(|| AppError::Forbidden("stripe webhook secret is not configured".to_owned()))?;
+    let webhook_secret =
+        state.config.stripe_webhook_secret.clone().ok_or_else(|| {
+            AppError::Forbidden("stripe webhook secret is not configured".to_owned())
+        })?;
 
     let signature = headers
         .get("stripe-signature")
@@ -217,10 +209,8 @@ pub async fn webhook(
 
     stripe::verify_webhook_signature(body.as_ref(), signature, webhook_secret.as_str())?;
 
-    let event: stripe::StripeEvent =
-        serde_json::from_slice(body.as_ref()).map_err(|_| AppError::BadRequest(
-            "invalid stripe webhook payload".to_owned(),
-        ))?;
+    let event: stripe::StripeEvent = serde_json::from_slice(body.as_ref())
+        .map_err(|_| AppError::BadRequest("invalid stripe webhook payload".to_owned()))?;
 
     let inserted = sqlx::query_scalar::<_, String>(
         r#"
@@ -256,16 +246,14 @@ pub async fn webhook(
         }
         "customer.subscription.updated" | "customer.subscription.created" => {
             let subscription: stripe::StripeSubscription =
-                serde_json::from_value(event.data.object).map_err(|_| {
-                    AppError::BadRequest("invalid subscription payload".to_owned())
-                })?;
+                serde_json::from_value(event.data.object)
+                    .map_err(|_| AppError::BadRequest("invalid subscription payload".to_owned()))?;
             upsert_subscription_from_event(&state, &subscription).await?;
         }
         "customer.subscription.deleted" => {
             let subscription: stripe::StripeSubscription =
-                serde_json::from_value(event.data.object).map_err(|_| {
-                    AppError::BadRequest("invalid subscription payload".to_owned())
-                })?;
+                serde_json::from_value(event.data.object)
+                    .map_err(|_| AppError::BadRequest("invalid subscription payload".to_owned()))?;
             mark_subscription_canceled(&state, &subscription).await?;
         }
         _ => {}
@@ -572,7 +560,10 @@ async fn apply_subscription_checkout(
     Ok(())
 }
 
-async fn apply_sparks_checkout(state: &AppState, session: stripe::CheckoutSession) -> AppResult<()> {
+async fn apply_sparks_checkout(
+    state: &AppState,
+    session: stripe::CheckoutSession,
+) -> AppResult<()> {
     if session.payment_status.as_deref() != Some("paid") {
         return Ok(());
     }
@@ -603,8 +594,9 @@ async fn apply_sparks_checkout(state: &AppState, session: stripe::CheckoutSessio
     }
 
     let mut tx = ledger::begin_tx(state).await?;
-    let _ = ledger::apply_spark_transaction(&mut tx, user_id, sparks_amount, TxType::Purchase, None)
-        .await?;
+    let _ =
+        ledger::apply_spark_transaction(&mut tx, user_id, sparks_amount, TxType::Purchase, None)
+            .await?;
     ledger::commit(tx).await?;
 
     Ok(())
@@ -645,7 +637,10 @@ async fn upsert_subscription_from_event(
     .execute(&state.db)
     .await?;
 
-    let premium_active = matches!(subscription.status.as_str(), "active" | "trialing" | "past_due");
+    let premium_active = matches!(
+        subscription.status.as_str(),
+        "active" | "trialing" | "past_due"
+    );
     sqlx::query(
         r#"
         UPDATE users
@@ -713,7 +708,8 @@ fn parse_user_id_from_session(session: &stripe::CheckoutSession) -> AppResult<Uu
         .or(session.client_reference_id.clone())
         .ok_or_else(|| AppError::BadRequest("missing user_id in session metadata".to_owned()))?;
 
-    Uuid::parse_str(raw.as_str()).map_err(|_| AppError::BadRequest("invalid user_id metadata".to_owned()))
+    Uuid::parse_str(raw.as_str())
+        .map_err(|_| AppError::BadRequest("invalid user_id metadata".to_owned()))
 }
 
 fn stripe_secret(state: &AppState) -> AppResult<String> {
