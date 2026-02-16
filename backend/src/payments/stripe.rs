@@ -263,9 +263,11 @@ fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
         return AppError::TooManyRequests(message);
     }
 
-    if matches!(error_type, Some("idempotency_error"))
-        || matches!(error_code, Some("idempotency_key_in_use"))
-    {
+    if matches!(error_type, Some("idempotency_error")) {
+        return AppError::BadRequest(message);
+    }
+
+    if matches!(error_code, Some("idempotency_key_in_use")) {
         return AppError::Conflict(message);
     }
 

@@ -601,10 +601,10 @@ pub fn spawn_cashout_reconciler(state: AppState) {
 }
 
 async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<()> {
-    let marked = mark_old_pending_cashouts_for_manual_reconciliation(state).await?;
-    if marked > 0 {
-        tracing::error!(
-            "marked {marked} pending cashout request(s) for manual reconciliation after max retry age"
+    let resolved = mark_old_pending_cashouts_for_manual_reconciliation(state).await?;
+    if resolved > 0 {
+        tracing::info!(
+            "resolved {resolved} stale pending cashout request(s) during manual reconciliation pass"
         );
     }
 
@@ -887,9 +887,9 @@ async fn mark_cashout_retry_pending(
 }
 
 async fn mark_old_pending_cashouts_for_manual_reconciliation(state: &AppState) -> AppResult<u64> {
-    let stale = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+    let stale = sqlx::query_as::<_, (Uuid, Uuid, i64, String)>(
         r#"
-        SELECT id, user_id, amount
+        SELECT id, user_id, amount, stripe_account_id
         FROM cashout_requests
         WHERE status = $1
           AND created_at < NOW() - ($2::bigint * INTERVAL '1 second')
@@ -900,23 +900,90 @@ async fn mark_old_pending_cashouts_for_manual_reconciliation(state: &AppState) -
     .fetch_all(&state.db)
     .await?;
 
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let stripe_secret = match stripe_secret(state) {
+        Ok(secret) => secret,
+        Err(err) => {
+            tracing::error!(
+                "cannot verify stale cashouts with stripe, skipping manual reconciliation: {err}"
+            );
+            return Ok(0);
+        }
+    };
+
     let mut count = 0u64;
-    for (cashout_id, user_id, amount) in &stale {
-        if let Err(err) = finalize_failed_cashout(
-            state,
-            *user_id,
-            *cashout_id,
+    for (cashout_id, user_id, amount, stripe_account_id) in &stale {
+        let idempotency_key = cashout_id.to_string();
+        match stripe::create_transfer(
+            stripe_secret.as_str(),
+            stripe_account_id.as_str(),
             *amount,
-            CASHOUT_MANUAL_RECONCILE_REASON,
+            "usd",
+            "Othergirl cashout",
+            idempotency_key.as_str(),
         )
         .await
         {
-            tracing::error!(
-                "failed to finalize stale pending cashout {cashout_id} for manual reconciliation: {err}"
-            );
-            continue;
+            Ok(transfer_id) => {
+                match finalize_completed_cashout(state, *cashout_id, transfer_id.as_str()).await {
+                    Ok(true) => {
+                        tracing::info!(
+                            "stale cashout {cashout_id} verified as completed via stripe replay (transfer {transfer_id})"
+                        );
+                    }
+                    Ok(false) => {
+                        tracing::warn!(
+                            "stale cashout {cashout_id} stripe replay succeeded but row was already finalized"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            "stale cashout {cashout_id} stripe replay succeeded but db finalization failed: {err}"
+                        );
+                        continue;
+                    }
+                }
+                count += 1;
+            }
+            Err(ref err) if should_finalize_failed_cashout(err) => {
+                let failure_reason = app_error_message(err);
+                if let Err(refund_err) = finalize_failed_cashout(
+                    state,
+                    *user_id,
+                    *cashout_id,
+                    *amount,
+                    failure_reason.as_str(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "failed to finalize stale pending cashout {cashout_id} after confirmed stripe failure: {refund_err}"
+                    );
+                    continue;
+                }
+                count += 1;
+            }
+            Err(err) => {
+                let failure_reason = app_error_message(&err);
+                tracing::error!(
+                    "stale cashout {cashout_id} could not be verified with stripe ({failure_reason}), requires manual investigation"
+                );
+                if let Err(update_err) = mark_cashout_retry_pending(
+                    state,
+                    *cashout_id,
+                    &format!("{CASHOUT_MANUAL_RECONCILE_REASON}: {failure_reason}"),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "failed to update failure reason for stale cashout {cashout_id}: {update_err}"
+                    );
+                }
+            }
         }
-        count += 1;
     }
 
     Ok(count)
