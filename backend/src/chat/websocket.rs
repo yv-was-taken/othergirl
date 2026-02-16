@@ -494,27 +494,33 @@ async fn process_chat_event(
                 .await;
         }
         ClientEvent::ReadReceipt { message_id } => {
-            sqlx::query(
+            let result = sqlx::query(
                 r#"
                 UPDATE messages
                 SET is_read = TRUE
                 WHERE id = $1
+                  AND chat_id = $2
+                  AND sender_id != $3
                 "#,
             )
             .bind(message_id)
+            .bind(chat_id)
+            .bind(user_id)
             .execute(&state.db)
             .await?;
 
-            state
-                .chat_hub
-                .send(
-                    chat_id,
-                    ServerEvent::ReadReceipt {
-                        message_id,
-                        reader_id: user_id,
-                    },
-                )
-                .await;
+            if result.rows_affected() > 0 {
+                state
+                    .chat_hub
+                    .send(
+                        chat_id,
+                        ServerEvent::ReadReceipt {
+                            message_id,
+                            reader_id: user_id,
+                        },
+                    )
+                    .await;
+            }
         }
         ClientEvent::KeepVote { keep } => {
             let result = register_keep_vote(state, chat_id, user_id, keep).await?;
