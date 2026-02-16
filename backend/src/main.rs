@@ -67,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     matchmaking::matcher::spawn_matcher(state.clone());
+    payments::spawn_background_jobs(state.clone());
 
     let cors = if config.cors_origin == "*" {
         CorsLayer::very_permissive()

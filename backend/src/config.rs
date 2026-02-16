@@ -44,10 +44,10 @@ impl AppConfig {
 
         let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-now".to_owned());
         let chat_key_encryption_key = chat_key_encryption_key_from_env(&jwt_secret);
-        let public_api_base_url = env::var("PUBLIC_API_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_owned());
-        let public_web_base_url = env::var("PUBLIC_WEB_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:3000".to_owned());
+        let public_api_base_url =
+            env::var("PUBLIC_API_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_owned());
+        let public_web_base_url =
+            env::var("PUBLIC_WEB_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_owned());
 
         Self {
             server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_owned()),

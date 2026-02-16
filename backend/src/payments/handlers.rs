@@ -53,6 +53,16 @@ pub struct CashoutRequest {
     pub amount: i64,
 }
 
+const CASHOUT_STATUS_PENDING: &str = "pending";
+const CASHOUT_STATUS_COMPLETED: &str = "completed";
+const CASHOUT_STATUS_FAILED: &str = "failed";
+const CASHOUT_RECONCILE_INTERVAL_SECS: u64 = 60;
+const CASHOUT_RECONCILE_STALE_SECS: i64 = 120;
+const CASHOUT_RECONCILE_BATCH_SIZE: i64 = 50;
+const CASHOUT_RECONCILE_MAX_RETRY_AGE_SECS: i64 = 20 * 60 * 60;
+const CASHOUT_MANUAL_RECONCILE_REASON: &str =
+    "manual reconciliation required: pending cashout exceeded idempotency retry window";
+
 pub async fn subscribe(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -108,9 +118,7 @@ pub async fn subscribe(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session
-        .url
-        .ok_or_else(|| AppError::Internal)?;
+    let checkout_url = session.url.ok_or_else(|| AppError::Internal)?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -160,10 +168,7 @@ pub async fn buy_sparks(
             "metadata[user_id]".to_owned(),
             auth_user.user_id.to_string(),
         ),
-        (
-            "metadata[purchase_type]".to_owned(),
-            "sparks".to_owned(),
-        ),
+        ("metadata[purchase_type]".to_owned(), "sparks".to_owned()),
         (
             "metadata[sparks_amount]".to_owned(),
             payload.amount.to_string(),
@@ -186,9 +191,7 @@ pub async fn buy_sparks(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session
-        .url
-        .ok_or_else(|| AppError::Internal)?;
+    let checkout_url = session.url.ok_or_else(|| AppError::Internal)?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -204,11 +207,10 @@ pub async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<serde_json::Value>> {
-    let webhook_secret = state
-        .config
-        .stripe_webhook_secret
-        .clone()
-        .ok_or_else(|| AppError::Forbidden("stripe webhook secret is not configured".to_owned()))?;
+    let webhook_secret =
+        state.config.stripe_webhook_secret.clone().ok_or_else(|| {
+            AppError::Forbidden("stripe webhook secret is not configured".to_owned())
+        })?;
 
     let signature = headers
         .get("stripe-signature")
@@ -217,10 +219,8 @@ pub async fn webhook(
 
     stripe::verify_webhook_signature(body.as_ref(), signature, webhook_secret.as_str())?;
 
-    let event: stripe::StripeEvent =
-        serde_json::from_slice(body.as_ref()).map_err(|_| AppError::BadRequest(
-            "invalid stripe webhook payload".to_owned(),
-        ))?;
+    let event: stripe::StripeEvent = serde_json::from_slice(body.as_ref())
+        .map_err(|_| AppError::BadRequest("invalid stripe webhook payload".to_owned()))?;
 
     let inserted = sqlx::query_scalar::<_, String>(
         r#"
@@ -256,16 +256,14 @@ pub async fn webhook(
         }
         "customer.subscription.updated" | "customer.subscription.created" => {
             let subscription: stripe::StripeSubscription =
-                serde_json::from_value(event.data.object).map_err(|_| {
-                    AppError::BadRequest("invalid subscription payload".to_owned())
-                })?;
+                serde_json::from_value(event.data.object)
+                    .map_err(|_| AppError::BadRequest("invalid subscription payload".to_owned()))?;
             upsert_subscription_from_event(&state, &subscription).await?;
         }
         "customer.subscription.deleted" => {
             let subscription: stripe::StripeSubscription =
-                serde_json::from_value(event.data.object).map_err(|_| {
-                    AppError::BadRequest("invalid subscription payload".to_owned())
-                })?;
+                serde_json::from_value(event.data.object)
+                    .map_err(|_| AppError::BadRequest("invalid subscription payload".to_owned()))?;
             mark_subscription_canceled(&state, &subscription).await?;
         }
         _ => {}
@@ -430,47 +428,118 @@ pub async fn cashout_request(
         ));
     }
 
+    let cashout_request_id = Uuid::new_v4();
     let mut tx = ledger::begin_tx(&state).await?;
     let balance = ledger::apply_spark_transaction(
         &mut tx,
         auth_user.user_id,
         -payload.amount,
         TxType::Cashout,
-        None,
+        Some(cashout_request_id),
     )
     .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO cashout_requests (id, user_id, amount, stripe_account_id, status)
+        VALUES ($1, $2, $3, $4, 'pending')
+        "#,
+    )
+    .bind(cashout_request_id)
+    .bind(auth_user.user_id)
+    .bind(payload.amount)
+    .bind(connect.0.as_str())
+    .execute(&mut *tx)
+    .await
+    .map_err(map_cashout_insert_error)?;
+
     ledger::commit(tx).await?;
 
     let stripe_secret = stripe_secret(&state)?;
+    let idempotency_key = cashout_request_id.to_string();
     let transfer_id = match stripe::create_transfer(
         stripe_secret.as_str(),
         connect.0.as_str(),
         payload.amount,
         "usd",
         "Othergirl cashout",
+        idempotency_key.as_str(),
     )
     .await
     {
         Ok(transfer_id) => transfer_id,
         Err(err) => {
-            let mut rollback_tx = ledger::begin_tx(&state).await?;
-            let _ = ledger::apply_spark_transaction(
-                &mut rollback_tx,
-                auth_user.user_id,
-                payload.amount,
-                TxType::Cashout,
-                None,
-            )
-            .await?;
-            ledger::commit(rollback_tx).await?;
-            return Err(err);
+            if should_finalize_failed_cashout(&err) {
+                let failure_reason = app_error_message(&err);
+                finalize_failed_cashout(
+                    &state,
+                    auth_user.user_id,
+                    cashout_request_id,
+                    payload.amount,
+                    failure_reason.as_str(),
+                )
+                .await?;
+                return Err(err);
+            }
+
+            let failure_reason = app_error_message(&err);
+            if let Err(update_err) =
+                mark_cashout_retry_pending(&state, cashout_request_id, failure_reason.as_str())
+                    .await
+            {
+                tracing::error!(
+                    "failed to update retry timestamp for cashout request {cashout_request_id}: {update_err}"
+                );
+            }
+
+            tracing::warn!(
+                "cashout request {cashout_request_id} accepted as pending after retriable stripe error"
+            );
+            return Ok(Json(serde_json::json!({
+                "cashout_request_id": cashout_request_id,
+                "requested": payload.amount,
+                "new_balance": balance,
+                "status": CASHOUT_STATUS_PENDING
+            })));
         }
     };
 
+    let updated =
+        finalize_completed_cashout(&state, cashout_request_id, transfer_id.as_str()).await?;
+    if !updated {
+        let outcome = fetch_cashout_request_outcome(&state, cashout_request_id).await?;
+        match outcome {
+            Some((status, stored_transfer_id)) if status == CASHOUT_STATUS_COMPLETED => {
+                return Ok(Json(serde_json::json!({
+                    "cashout_request_id": cashout_request_id,
+                    "requested": payload.amount,
+                    "new_balance": balance,
+                    "status": CASHOUT_STATUS_COMPLETED,
+                    "stripe_transfer_id": stored_transfer_id.unwrap_or(transfer_id)
+                })));
+            }
+            Some((status, _)) if status == CASHOUT_STATUS_PENDING => {
+                return Err(AppError::Conflict(
+                    "cashout request is still pending".to_owned(),
+                ));
+            }
+            Some((status, _)) if status == CASHOUT_STATUS_FAILED => {
+                return Err(AppError::Conflict("cashout request failed".to_owned()));
+            }
+            Some(_) => {
+                return Err(AppError::Internal);
+            }
+            None => {
+                return Err(AppError::Internal);
+            }
+        }
+    }
+
     Ok(Json(serde_json::json!({
+        "cashout_request_id": cashout_request_id,
         "requested": payload.amount,
         "new_balance": balance,
-        "status": "processing",
+        "status": CASHOUT_STATUS_COMPLETED,
         "stripe_transfer_id": transfer_id
     })))
 }
@@ -516,6 +585,354 @@ pub async fn cashout_status(
     };
 
     Ok(Json(serde_json::json!({ "connect": connect })))
+}
+
+pub fn spawn_cashout_reconciler(state: AppState) {
+    tokio::spawn(async move {
+        let interval = std::time::Duration::from_secs(CASHOUT_RECONCILE_INTERVAL_SECS);
+
+        loop {
+            if let Err(err) = reconcile_stale_pending_cashouts(&state).await {
+                tracing::error!("cashout reconciliation failed: {err}");
+            }
+            tokio::time::sleep(interval).await;
+        }
+    });
+}
+
+async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<()> {
+    let marked = mark_old_pending_cashouts_for_manual_reconciliation(state).await?;
+    if marked > 0 {
+        tracing::error!(
+            "marked {marked} pending cashout request(s) for manual reconciliation after max retry age"
+        );
+    }
+
+    let pending = sqlx::query_as::<_, (Uuid, Uuid, i64, String, chrono::DateTime<Utc>)>(
+        r#"
+        SELECT id, user_id, amount, stripe_account_id, updated_at
+        FROM cashout_requests
+        WHERE status = 'pending'
+          AND updated_at < NOW() - ($1::bigint * INTERVAL '1 second')
+          AND created_at >= NOW() - ($3::bigint * INTERVAL '1 second')
+        ORDER BY updated_at ASC, created_at ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(CASHOUT_RECONCILE_STALE_SECS)
+    .bind(CASHOUT_RECONCILE_BATCH_SIZE)
+    .bind(CASHOUT_RECONCILE_MAX_RETRY_AGE_SECS)
+    .fetch_all(&state.db)
+    .await?;
+
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    let stripe_secret = match stripe_secret(state) {
+        Ok(secret) => secret,
+        Err(err) => {
+            tracing::warn!("cashout reconciliation skipped: {err}");
+            return Ok(());
+        }
+    };
+
+    for (cashout_request_id, user_id, amount, stripe_account_id, expected_updated_at) in pending {
+        if let Err(err) = reconcile_pending_cashout(
+            state,
+            stripe_secret.as_str(),
+            cashout_request_id,
+            user_id,
+            amount,
+            stripe_account_id.as_str(),
+            expected_updated_at,
+        )
+        .await
+        {
+            tracing::error!(
+                "cashout reconciliation failed for request {cashout_request_id}: {err}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn reconcile_pending_cashout(
+    state: &AppState,
+    stripe_secret: &str,
+    cashout_request_id: Uuid,
+    user_id: Uuid,
+    amount: i64,
+    stripe_account_id: &str,
+    expected_updated_at: chrono::DateTime<Utc>,
+) -> AppResult<()> {
+    let claimed =
+        claim_pending_cashout_for_reconciliation(state, cashout_request_id, expected_updated_at)
+            .await?;
+    if !claimed {
+        return Ok(());
+    }
+
+    let idempotency_key = cashout_request_id.to_string();
+    match stripe::create_transfer(
+        stripe_secret,
+        stripe_account_id,
+        amount,
+        "usd",
+        "Othergirl cashout",
+        idempotency_key.as_str(),
+    )
+    .await
+    {
+        Ok(transfer_id) => {
+            let updated =
+                finalize_completed_cashout(state, cashout_request_id, transfer_id.as_str()).await?;
+            if !updated {
+                tracing::error!(
+                    "cashout request {cashout_request_id} was claimed for reconciliation but could not be finalized completed"
+                );
+                return Err(AppError::Conflict(
+                    "cashout reconciliation completion lost ownership".to_owned(),
+                ));
+            }
+        }
+        Err(err) => {
+            if should_finalize_failed_cashout(&err) {
+                let failure_reason = app_error_message(&err);
+                finalize_failed_cashout(
+                    state,
+                    user_id,
+                    cashout_request_id,
+                    amount,
+                    failure_reason.as_str(),
+                )
+                .await?;
+            } else {
+                let failure_reason = app_error_message(&err);
+                mark_cashout_retry_pending(state, cashout_request_id, failure_reason.as_str())
+                    .await?;
+                tracing::warn!(
+                    "cashout request {cashout_request_id} reconciliation deferred after retriable stripe error"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn claim_pending_cashout_for_reconciliation(
+    state: &AppState,
+    cashout_request_id: Uuid,
+    expected_updated_at: chrono::DateTime<Utc>,
+) -> AppResult<bool> {
+    let claim = sqlx::query(
+        r#"
+        UPDATE cashout_requests
+        SET updated_at = NOW()
+        WHERE id = $1
+          AND status = $2
+          AND updated_at = $3
+        "#,
+    )
+    .bind(cashout_request_id)
+    .bind(CASHOUT_STATUS_PENDING)
+    .bind(expected_updated_at)
+    .execute(&state.db)
+    .await?;
+
+    Ok(claim.rows_affected() == 1)
+}
+
+async fn finalize_completed_cashout(
+    state: &AppState,
+    cashout_request_id: Uuid,
+    transfer_id: &str,
+) -> AppResult<bool> {
+    let completion = sqlx::query(
+        r#"
+        UPDATE cashout_requests
+        SET status = 'completed',
+            stripe_transfer_id = $2,
+            completed_at = NOW(),
+            updated_at = NOW(),
+            failure_reason = NULL
+        WHERE id = $1 AND status = 'pending'
+        "#,
+    )
+    .bind(cashout_request_id)
+    .bind(transfer_id)
+    .execute(&state.db)
+    .await?;
+
+    Ok(completion.rows_affected() == 1)
+}
+
+async fn finalize_failed_cashout(
+    state: &AppState,
+    user_id: Uuid,
+    cashout_request_id: Uuid,
+    amount: i64,
+    failure_reason: &str,
+) -> AppResult<()> {
+    let mut tx = ledger::begin_tx(state).await?;
+
+    // Keep lock ordering consistent with cashout_request:
+    // always lock the user row before touching cashout_requests rows.
+    let _ = ledger::current_balance(&mut tx, user_id).await?;
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE cashout_requests
+        SET status = 'failed',
+            failure_reason = $2,
+            failed_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1 AND status = 'pending'
+        "#,
+    )
+    .bind(cashout_request_id)
+    .bind(failure_reason)
+    .execute(&mut *tx)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        ledger::commit(tx).await?;
+        return Ok(());
+    }
+
+    let _ = ledger::apply_spark_transaction(
+        &mut tx,
+        user_id,
+        amount,
+        TxType::CashoutRefund,
+        Some(cashout_request_id),
+    )
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE cashout_requests
+        SET refunded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+    )
+    .bind(cashout_request_id)
+    .execute(&mut *tx)
+    .await?;
+
+    ledger::commit(tx).await
+}
+
+fn app_error_message(err: &AppError) -> String {
+    match err {
+        AppError::BadRequest(message)
+        | AppError::Unauthorized(message)
+        | AppError::Forbidden(message)
+        | AppError::NotFound(message)
+        | AppError::Conflict(message)
+        | AppError::TooManyRequests(message) => message.clone(),
+        AppError::Internal => "internal server error".to_owned(),
+    }
+}
+
+fn map_cashout_insert_error(err: sqlx::Error) -> AppError {
+    if is_unique_violation(&err) {
+        return AppError::Conflict("a cashout request is already pending".to_owned());
+    }
+
+    AppError::from(err)
+}
+
+async fn fetch_cashout_request_outcome(
+    state: &AppState,
+    cashout_request_id: Uuid,
+) -> AppResult<Option<(String, Option<String>)>> {
+    sqlx::query_as::<_, (String, Option<String>)>(
+        r#"
+        SELECT status, stripe_transfer_id
+        FROM cashout_requests
+        WHERE id = $1
+        "#,
+    )
+    .bind(cashout_request_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Into::into)
+}
+
+async fn mark_cashout_retry_pending(
+    state: &AppState,
+    cashout_request_id: Uuid,
+    failure_reason: &str,
+) -> AppResult<()> {
+    let _ = sqlx::query(
+        r#"
+        UPDATE cashout_requests
+        SET updated_at = NOW(),
+            failure_reason = $2
+        WHERE id = $1
+          AND status = $3
+        "#,
+    )
+    .bind(cashout_request_id)
+    .bind(failure_reason)
+    .bind(CASHOUT_STATUS_PENDING)
+    .execute(&state.db)
+    .await?;
+
+    Ok(())
+}
+
+async fn mark_old_pending_cashouts_for_manual_reconciliation(state: &AppState) -> AppResult<u64> {
+    let stale = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+        r#"
+        SELECT id, user_id, amount
+        FROM cashout_requests
+        WHERE status = $1
+          AND created_at < NOW() - ($2::bigint * INTERVAL '1 second')
+        "#,
+    )
+    .bind(CASHOUT_STATUS_PENDING)
+    .bind(CASHOUT_RECONCILE_MAX_RETRY_AGE_SECS)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut count = 0u64;
+    for (cashout_id, user_id, amount) in &stale {
+        if let Err(err) = finalize_failed_cashout(
+            state,
+            *user_id,
+            *cashout_id,
+            *amount,
+            CASHOUT_MANUAL_RECONCILE_REASON,
+        )
+        .await
+        {
+            tracing::error!(
+                "failed to finalize stale pending cashout {cashout_id} for manual reconciliation: {err}"
+            );
+            continue;
+        }
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+fn should_finalize_failed_cashout(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::BadRequest(_) | AppError::Unauthorized(_) | AppError::Forbidden(_)
+    )
+}
+
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    err.as_database_error()
+        .and_then(|db_err| db_err.code())
+        .is_some_and(|code| code == "23505")
 }
 
 async fn apply_subscription_checkout(
@@ -572,7 +989,10 @@ async fn apply_subscription_checkout(
     Ok(())
 }
 
-async fn apply_sparks_checkout(state: &AppState, session: stripe::CheckoutSession) -> AppResult<()> {
+async fn apply_sparks_checkout(
+    state: &AppState,
+    session: stripe::CheckoutSession,
+) -> AppResult<()> {
     if session.payment_status.as_deref() != Some("paid") {
         return Ok(());
     }
@@ -603,8 +1023,9 @@ async fn apply_sparks_checkout(state: &AppState, session: stripe::CheckoutSessio
     }
 
     let mut tx = ledger::begin_tx(state).await?;
-    let _ = ledger::apply_spark_transaction(&mut tx, user_id, sparks_amount, TxType::Purchase, None)
-        .await?;
+    let _ =
+        ledger::apply_spark_transaction(&mut tx, user_id, sparks_amount, TxType::Purchase, None)
+            .await?;
     ledger::commit(tx).await?;
 
     Ok(())
@@ -645,7 +1066,10 @@ async fn upsert_subscription_from_event(
     .execute(&state.db)
     .await?;
 
-    let premium_active = matches!(subscription.status.as_str(), "active" | "trialing" | "past_due");
+    let premium_active = matches!(
+        subscription.status.as_str(),
+        "active" | "trialing" | "past_due"
+    );
     sqlx::query(
         r#"
         UPDATE users
@@ -713,7 +1137,8 @@ fn parse_user_id_from_session(session: &stripe::CheckoutSession) -> AppResult<Uu
         .or(session.client_reference_id.clone())
         .ok_or_else(|| AppError::BadRequest("missing user_id in session metadata".to_owned()))?;
 
-    Uuid::parse_str(raw.as_str()).map_err(|_| AppError::BadRequest("invalid user_id metadata".to_owned()))
+    Uuid::parse_str(raw.as_str())
+        .map_err(|_| AppError::BadRequest("invalid user_id metadata".to_owned()))
 }
 
 fn stripe_secret(state: &AppState) -> AppResult<String> {

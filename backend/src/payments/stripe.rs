@@ -101,6 +101,7 @@ pub async fn create_transfer(
     amount: i64,
     currency: &str,
     description: &str,
+    idempotency_key: &str,
 ) -> AppResult<String> {
     #[derive(Debug, Deserialize)]
     struct Transfer {
@@ -114,7 +115,13 @@ pub async fn create_transfer(
         ("description".to_owned(), description.to_owned()),
     ];
 
-    let transfer = post_form::<Transfer>(secret_key, "/transfers", &params).await?;
+    let transfer = post_form_with_idempotency::<Transfer>(
+        secret_key,
+        "/transfers",
+        &params,
+        Some(idempotency_key),
+    )
+    .await?;
     Ok(transfer.id)
 }
 
@@ -138,9 +145,8 @@ pub fn verify_webhook_signature(
         }
     }
 
-    let timestamp = timestamp.ok_or_else(|| {
-        AppError::Unauthorized("missing webhook signature timestamp".to_owned())
-    })?;
+    let timestamp = timestamp
+        .ok_or_else(|| AppError::Unauthorized("missing webhook signature timestamp".to_owned()))?;
 
     let now = Utc::now().timestamp();
     if (now - timestamp).abs() > WEBHOOK_TOLERANCE_SECONDS {
@@ -150,15 +156,13 @@ pub fn verify_webhook_signature(
     }
 
     let signed_payload = format!("{timestamp}.{}", String::from_utf8_lossy(payload));
-    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).map_err(|_| {
-        AppError::Unauthorized("invalid webhook signing configuration".to_owned())
-    })?;
+    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
+        .map_err(|_| AppError::Unauthorized("invalid webhook signing configuration".to_owned()))?;
     mac.update(signed_payload.as_bytes());
 
     for signature in signatures {
-        let decoded = decode_hex(signature.as_str()).map_err(|_| {
-            AppError::Unauthorized("invalid webhook signature encoding".to_owned())
-        })?;
+        let decoded = decode_hex(signature.as_str())
+            .map_err(|_| AppError::Unauthorized("invalid webhook signature encoding".to_owned()))?;
         if mac.clone().verify_slice(decoded.as_slice()).is_ok() {
             return Ok(());
         }
@@ -192,14 +196,29 @@ async fn post_form<T>(secret_key: &str, path: &str, params: &[(String, String)])
 where
     T: serde::de::DeserializeOwned,
 {
+    post_form_with_idempotency(secret_key, path, params, None).await
+}
+
+async fn post_form_with_idempotency<T>(
+    secret_key: &str,
+    path: &str,
+    params: &[(String, String)],
+    idempotency_key: Option<&str>,
+) -> AppResult<T>
+where
+    T: serde::de::DeserializeOwned,
+{
     let client = reqwest::Client::new();
-    let response = client
+    let mut request = client
         .post(format!("{STRIPE_BASE}{path}"))
         .bearer_auth(secret_key)
-        .form(params)
-        .send()
-        .await
-        .map_err(|_| AppError::Internal)?;
+        .form(params);
+
+    if let Some(idempotency_key) = idempotency_key {
+        request = request.header("Idempotency-Key", idempotency_key);
+    }
+
+    let response = request.send().await.map_err(|_| AppError::Internal)?;
 
     parse_response::<T>(response).await
 }
@@ -219,14 +238,43 @@ where
 }
 
 fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
-    let message = serde_json::from_str::<serde_json::Value>(body)
+    let parsed_error = serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|value| value.get("error").cloned())
-        .and_then(|error| error.get("message").and_then(|v| v.as_str()).map(str::to_owned))
+        .and_then(|value| value.get("error").cloned());
+
+    let message = parsed_error
+        .as_ref()
+        .and_then(|error| {
+            error
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| "stripe request failed".to_owned());
+
+    let error_type = parsed_error
+        .as_ref()
+        .and_then(|error| error.get("type").and_then(|v| v.as_str()));
+    let error_code = parsed_error
+        .as_ref()
+        .and_then(|error| error.get("code").and_then(|v| v.as_str()));
+
+    if status == StatusCode::TOO_MANY_REQUESTS || matches!(error_type, Some("rate_limit_error")) {
+        return AppError::TooManyRequests(message);
+    }
+
+    if matches!(error_type, Some("idempotency_error"))
+        || matches!(error_code, Some("idempotency_key_in_use"))
+    {
+        return AppError::Conflict(message);
+    }
 
     if status == StatusCode::UNAUTHORIZED {
         return AppError::Unauthorized(message);
+    }
+
+    if status == StatusCode::FORBIDDEN {
+        return AppError::Forbidden(message);
     }
 
     if status.is_client_error() {
