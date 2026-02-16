@@ -267,7 +267,11 @@ pub async fn set_match_notification(
 ) -> AppResult<()> {
     let payload = serde_json::to_string(notification).map_err(|_| AppError::Internal)?;
     let _: () = conn
-        .set_ex(match_notification_key(user_id), payload, state.config.queue_session_ttl_seconds)
+        .set_ex(
+            match_notification_key(user_id),
+            payload,
+            state.config.queue_session_ttl_seconds,
+        )
         .await?;
     Ok(())
 }
@@ -304,7 +308,10 @@ pub async fn is_user_queued(
     conn: &mut redis::aio::MultiplexedConnection,
     user_id: Uuid,
 ) -> AppResult<bool> {
-    Ok(conn.get::<_, Option<String>>(queue_user_key(user_id)).await?.is_some())
+    Ok(conn
+        .get::<_, Option<String>>(queue_user_key(user_id))
+        .await?
+        .is_some())
 }
 
 pub async fn is_match_compatible(
@@ -484,7 +491,10 @@ async fn in_cooldown(
     conn: &mut redis::aio::MultiplexedConnection,
     user_id: Uuid,
 ) -> AppResult<bool> {
-    Ok(conn.get::<_, Option<String>>(cooldown_key(user_id)).await?.is_some())
+    Ok(conn
+        .get::<_, Option<String>>(cooldown_key(user_id))
+        .await?
+        .is_some())
 }
 
 async fn cooldown_ttl(

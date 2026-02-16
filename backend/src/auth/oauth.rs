@@ -165,11 +165,16 @@ async fn oauth_identity_from_provider(
         "google" => fetch_google_identity(access_token).await,
         "discord" => fetch_discord_identity(access_token).await,
         "github" => fetch_github_identity(access_token).await,
-        _ => Err(AppError::BadRequest("unsupported oauth provider".to_owned())),
+        _ => Err(AppError::BadRequest(
+            "unsupported oauth provider".to_owned(),
+        )),
     }
 }
 
-fn oauth_identity_from_telegram(state: &AppState, query: &OauthCallbackQuery) -> AppResult<OauthIdentity> {
+fn oauth_identity_from_telegram(
+    state: &AppState,
+    query: &OauthCallbackQuery,
+) -> AppResult<OauthIdentity> {
     let bot_token = state
         .config
         .telegram_bot_token
@@ -198,10 +203,7 @@ fn oauth_identity_from_telegram(state: &AppState, query: &OauthCallbackQuery) ->
         ));
     }
 
-    let mut fields = vec![
-        ("auth_date", auth_date.clone()),
-        ("id", id.clone()),
-    ];
+    let mut fields = vec![("auth_date", auth_date.clone()), ("id", id.clone())];
     if let Some(first_name) = query.first_name.clone() {
         fields.push(("first_name", first_name));
     }
@@ -519,9 +521,13 @@ fn build_telegram_auth_url(state: &AppState, oauth_state: &str) -> AppResult<Str
     ))
 }
 
-async fn validate_oauth_state(state: &AppState, incoming_state: Option<&str>, provider: &str) -> AppResult<()> {
-    let incoming_state = incoming_state
-        .ok_or_else(|| AppError::BadRequest("missing oauth state".to_owned()))?;
+async fn validate_oauth_state(
+    state: &AppState,
+    incoming_state: Option<&str>,
+    provider: &str,
+) -> AppResult<()> {
+    let incoming_state =
+        incoming_state.ok_or_else(|| AppError::BadRequest("missing oauth state".to_owned()))?;
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let stored_provider: Option<String> = conn.get(oauth_state_key(incoming_state)).await?;
 
