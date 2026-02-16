@@ -10,6 +10,51 @@ use crate::error::{AppError, AppResult};
 
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
+const LEGACY_CHAT_KEY_MIGRATION_LOCK_ID: i64 = 50_500_001;
+
+pub async fn migrate_legacy_plaintext_chat_keys(
+    db: &PgPool,
+    wrapping_key: &[u8; KEY_LEN],
+) -> AppResult<u64> {
+    let mut tx = db.begin().await?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(LEGACY_CHAT_KEY_MIGRATION_LOCK_ID)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    let legacy_keys = sqlx::query_as::<_, (Uuid, Vec<u8>)>(
+        r#"
+        SELECT chat_id, key_encrypted
+        FROM chat_keys
+        WHERE octet_length(key_encrypted) = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(KEY_LEN as i32)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for (chat_id, legacy_key) in &legacy_keys {
+        let wrapped = wrap_key(legacy_key.as_slice(), wrapping_key)?;
+
+        sqlx::query(
+            r#"
+            UPDATE chat_keys
+            SET key_encrypted = $2, rotated_at = NOW()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(chat_id)
+        .bind(wrapped)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(legacy_keys.len() as u64)
+}
 
 pub async fn encrypt_for_chat(
     db: &PgPool,
@@ -68,22 +113,6 @@ async fn get_or_create_key(
     .fetch_optional(db)
     .await?
     {
-        if stored.len() == KEY_LEN {
-            let wrapped = wrap_key(&stored, wrapping_key)?;
-            sqlx::query(
-                r#"
-                UPDATE chat_keys
-                SET key_encrypted = $2, rotated_at = NOW()
-                WHERE chat_id = $1
-                "#,
-            )
-            .bind(chat_id)
-            .bind(wrapped)
-            .execute(db)
-            .await?;
-            return Ok(stored);
-        }
-
         return unwrap_key(stored.as_slice(), wrapping_key);
     }
 

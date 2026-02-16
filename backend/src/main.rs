@@ -55,6 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env();
     let db = db::connect(&config.database_url).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
+    let migrated_chat_keys =
+        chat::encryption::migrate_legacy_plaintext_chat_keys(&db, &config.chat_key_encryption_key)
+            .await?;
+    if migrated_chat_keys > 0 {
+        info!(
+            migrated_chat_keys,
+            "migrated legacy plaintext chat encryption keys"
+        );
+    }
 
     let redis = redis_client::connect(&config.redis_url)?;
 
