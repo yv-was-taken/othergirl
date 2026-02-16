@@ -19,28 +19,43 @@
 
   onMount(async () => {
     const params = new URLSearchParams(window.location.search);
-    const oauthToken = params.get('oauth_token');
-    const oauthUserRaw = params.get('oauth_user');
+    const oauthCode = params.get('oauth_code');
 
-    if (!oauthToken || !oauthUserRaw) {
+    if (!oauthCode) {
       return;
     }
 
+    const nextSearchParams = new URLSearchParams(window.location.search);
+    nextSearchParams.delete('oauth_code');
+    const nextSearch = nextSearchParams.toString();
+    const cleanUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+    window.history.replaceState(null, '', cleanUrl);
+
+    loading = true;
     try {
-      const oauthUser = JSON.parse(oauthUserRaw) as {
-        id: string;
-        username: string;
-        email?: string;
-        is_premium: boolean;
-        is_age_verified: boolean;
-        created_at: string;
-      };
-      setSession(oauthToken, oauthUser);
+      const response = await apiFetch<{
+        token: string;
+        user: {
+          id: string;
+          username: string;
+          email?: string;
+          is_premium: boolean;
+          is_age_verified: boolean;
+          created_at: string;
+        };
+      }>('/api/auth/oauth/exchange', {
+        method: 'POST',
+        body: JSON.stringify({ code: oauthCode })
+      });
+
+      setSession(response.token, response.user);
       toast.success('OAuth login complete');
       await goto('/chat', { replaceState: true });
-    } catch {
-      toast.error('OAuth callback payload was invalid');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'OAuth login failed');
       await goto('/login', { replaceState: true });
+    } finally {
+      loading = false;
     }
   });
 
