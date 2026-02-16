@@ -4,6 +4,7 @@ use aes_gcm::{
 };
 use rand_core::{OsRng, RngCore};
 use sqlx::PgPool;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
@@ -16,8 +17,9 @@ pub async fn encrypt_for_chat(
     chat_id: Uuid,
     content: &str,
     wrapping_key: &[u8; KEY_LEN],
+    legacy_wrapping_keys: &[[u8; KEY_LEN]],
 ) -> AppResult<(Vec<u8>, Vec<u8>)> {
-    let key = get_or_create_key(db, chat_id, wrapping_key).await?;
+    let key = get_or_create_key(db, chat_id, wrapping_key, legacy_wrapping_keys).await?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| AppError::Internal)?;
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -37,9 +39,10 @@ pub async fn decrypt_for_chat(
     nonce: Option<Vec<u8>>,
     legacy_content_text: Option<String>,
     wrapping_key: &[u8; KEY_LEN],
+    legacy_wrapping_keys: &[[u8; KEY_LEN]],
 ) -> AppResult<String> {
     if let (Some(ciphertext), Some(nonce_bytes)) = (content_encrypted, nonce) {
-        let key = get_or_create_key(db, chat_id, wrapping_key).await?;
+        let key = get_or_create_key(db, chat_id, wrapping_key, legacy_wrapping_keys).await?;
         let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| AppError::Internal)?;
 
         let decrypted = cipher
@@ -56,6 +59,7 @@ async fn get_or_create_key(
     db: &PgPool,
     chat_id: Uuid,
     wrapping_key: &[u8; KEY_LEN],
+    legacy_wrapping_keys: &[[u8; KEY_LEN]],
 ) -> AppResult<Vec<u8>> {
     if let Some(stored) = sqlx::query_scalar::<_, Vec<u8>>(
         r#"
@@ -84,7 +88,33 @@ async fn get_or_create_key(
             return Ok(stored);
         }
 
-        return unwrap_key(stored.as_slice(), wrapping_key);
+        if let Ok(unwrapped) = unwrap_key(stored.as_slice(), wrapping_key) {
+            return Ok(unwrapped);
+        }
+
+        for legacy_key in legacy_wrapping_keys {
+            if let Ok(unwrapped) = unwrap_key(stored.as_slice(), legacy_key) {
+                let wrapped = wrap_key(unwrapped.as_slice(), wrapping_key)?;
+                sqlx::query(
+                    r#"
+                    UPDATE chat_keys
+                    SET key_encrypted = $2, rotated_at = NOW()
+                    WHERE chat_id = $1
+                    "#,
+                )
+                .bind(chat_id)
+                .bind(wrapped)
+                .execute(db)
+                .await?;
+                warn!(
+                    chat_id = %chat_id,
+                    "migrated chat key from legacy wrapping key to current wrapping key"
+                );
+                return Ok(unwrapped);
+            }
+        }
+
+        return Err(AppError::Internal);
     }
 
     let mut key = vec![0u8; KEY_LEN];
@@ -115,7 +145,33 @@ async fn get_or_create_key(
     .await?
     .ok_or(AppError::Internal)?;
 
-    unwrap_key(stored.as_slice(), wrapping_key)
+    if let Ok(unwrapped) = unwrap_key(stored.as_slice(), wrapping_key) {
+        return Ok(unwrapped);
+    }
+
+    for legacy_key in legacy_wrapping_keys {
+        if let Ok(unwrapped) = unwrap_key(stored.as_slice(), legacy_key) {
+            let wrapped = wrap_key(unwrapped.as_slice(), wrapping_key)?;
+            sqlx::query(
+                r#"
+                UPDATE chat_keys
+                SET key_encrypted = $2, rotated_at = NOW()
+                WHERE chat_id = $1
+                "#,
+            )
+            .bind(chat_id)
+            .bind(wrapped)
+            .execute(db)
+            .await?;
+            warn!(
+                chat_id = %chat_id,
+                "migrated chat key from legacy wrapping key to current wrapping key"
+            );
+            return Ok(unwrapped);
+        }
+    }
+
+    Err(AppError::Internal)
 }
 
 fn wrap_key(raw_key: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>> {

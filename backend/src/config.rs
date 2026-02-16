@@ -4,6 +4,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+const MIN_JWT_SECRET_LENGTH: usize = 32;
+const INSECURE_JWT_SECRETS: &[&str] = &["change-me-now", "replace-with-long-random-secret"];
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub server_addr: String,
@@ -33,6 +36,7 @@ pub struct AppConfig {
     pub queue_session_ttl_seconds: u64,
     pub cooldown_seconds: u64,
     pub chat_key_encryption_key: [u8; 32],
+    pub legacy_chat_key_encryption_keys: Vec<[u8; 32]>,
     pub emote_upload_dir: String,
     pub emote_public_base_url: String,
     pub admin_user_ids: Vec<Uuid>,
@@ -42,12 +46,14 @@ impl AppConfig {
     pub fn from_env() -> Self {
         dotenvy::dotenv().ok();
 
-        let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-now".to_owned());
+        let jwt_secret = jwt_secret_from_env();
         let chat_key_encryption_key = chat_key_encryption_key_from_env(&jwt_secret);
-        let public_api_base_url = env::var("PUBLIC_API_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_owned());
-        let public_web_base_url = env::var("PUBLIC_WEB_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:3000".to_owned());
+        let legacy_chat_key_encryption_keys =
+            legacy_chat_key_encryption_keys_from_env(&jwt_secret, &chat_key_encryption_key);
+        let public_api_base_url =
+            env::var("PUBLIC_API_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_owned());
+        let public_web_base_url =
+            env::var("PUBLIC_WEB_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_owned());
 
         Self {
             server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_owned()),
@@ -87,6 +93,7 @@ impl AppConfig {
             queue_session_ttl_seconds: env_u64("QUEUE_SESSION_TTL_SECONDS", 60 * 60),
             cooldown_seconds: env_u64("MATCH_COOLDOWN_SECONDS", 5),
             chat_key_encryption_key,
+            legacy_chat_key_encryption_keys,
             emote_upload_dir: env::var("EMOTE_UPLOAD_DIR")
                 .unwrap_or_else(|_| "uploads/emotes".to_owned()),
             emote_public_base_url: env::var("EMOTE_PUBLIC_BASE_URL")
@@ -94,6 +101,27 @@ impl AppConfig {
             admin_user_ids: parse_admin_user_ids(),
         }
     }
+}
+
+fn jwt_secret_from_env() -> String {
+    let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let jwt_secret = jwt_secret.trim().to_owned();
+
+    if jwt_secret.len() < MIN_JWT_SECRET_LENGTH {
+        panic!(
+            "JWT_SECRET must be at least {MIN_JWT_SECRET_LENGTH} characters long; got {}",
+            jwt_secret.len()
+        );
+    }
+
+    if INSECURE_JWT_SECRETS
+        .iter()
+        .any(|placeholder| jwt_secret.eq_ignore_ascii_case(placeholder))
+    {
+        panic!("JWT_SECRET uses insecure placeholder value");
+    }
+
+    jwt_secret
 }
 
 fn optional_env(key: &str) -> Option<String> {
@@ -109,21 +137,73 @@ fn env_u64(key: &str, default: u64) -> u64 {
 
 fn chat_key_encryption_key_from_env(jwt_secret: &str) -> [u8; 32] {
     if let Some(raw) = optional_env("CHAT_KEY_ENCRYPTION_KEY_B64") {
-        if let Ok(decoded) = STANDARD.decode(raw.as_bytes()) {
-            if decoded.len() == 32 {
-                let mut key = [0_u8; 32];
-                key.copy_from_slice(&decoded);
-                return key;
-            }
+        return parse_chat_key(raw.as_str(), "CHAT_KEY_ENCRYPTION_KEY_B64");
+    }
+
+    derive_chat_key_encryption_key(jwt_secret)
+}
+
+fn legacy_chat_key_encryption_keys_from_env(
+    jwt_secret: &str,
+    current_key: &[u8; 32],
+) -> Vec<[u8; 32]> {
+    let mut keys = optional_env("CHAT_KEY_ENCRYPTION_KEY_LEGACY_B64")
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| parse_chat_key(value, "CHAT_KEY_ENCRYPTION_KEY_LEGACY_B64"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for legacy_secret in INSECURE_JWT_SECRETS {
+        if !jwt_secret.eq_ignore_ascii_case(legacy_secret) {
+            keys.push(derive_chat_key_encryption_key(legacy_secret));
         }
     }
 
+    dedupe_chat_keys(keys, current_key)
+}
+
+fn dedupe_chat_keys(keys: Vec<[u8; 32]>, current_key: &[u8; 32]) -> Vec<[u8; 32]> {
+    let mut deduped = Vec::new();
+    for key in keys {
+        if &key == current_key {
+            continue;
+        }
+        if deduped.iter().any(|existing| existing == &key) {
+            continue;
+        }
+        deduped.push(key);
+    }
+    deduped
+}
+
+fn derive_chat_key_encryption_key(secret: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(jwt_secret.as_bytes());
+    hasher.update(secret.as_bytes());
     hasher.update(b":chat-key-wrap");
     let digest = hasher.finalize();
     let mut key = [0_u8; 32];
     key.copy_from_slice(&digest);
+    key
+}
+
+fn parse_chat_key(raw: &str, env_name: &str) -> [u8; 32] {
+    let decoded = STANDARD
+        .decode(raw.as_bytes())
+        .unwrap_or_else(|_| panic!("{env_name} must be valid base64"));
+
+    if decoded.len() != 32 {
+        panic!(
+            "{env_name} must decode to exactly 32 bytes; got {}",
+            decoded.len()
+        );
+    }
+
+    let mut key = [0_u8; 32];
+    key.copy_from_slice(&decoded);
     key
 }
 
