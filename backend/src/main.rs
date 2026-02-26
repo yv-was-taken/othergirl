@@ -64,6 +64,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let redis = redis_client::connect(&config.redis_url)?;
 
+    // Validate Redis connection
+    let mut conn = redis.get_multiplexed_tokio_connection().await?;
+    redis::cmd("PING").query_async::<_, String>(&mut conn).await
+        .expect("failed to connect to Redis — is it running?");
+    info!("Redis connection validated");
+
     let state = AppState {
         config: Arc::new(config.clone()),
         db,
