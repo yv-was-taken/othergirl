@@ -1,18 +1,8 @@
-import { browser } from '$app/environment';
-
 const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
-let authToken: string | null = browser ? localStorage.getItem('othergirl.token') : null;
+let authToken: string | null = null;
 
 export function setAuthToken(token: string | null) {
   authToken = token;
-
-  if (!browser) return;
-
-  if (token) {
-    localStorage.setItem('othergirl.token', token);
-  } else {
-    localStorage.removeItem('othergirl.token');
-  }
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
