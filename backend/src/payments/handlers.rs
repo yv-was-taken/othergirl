@@ -255,6 +255,11 @@ pub async fn webhook(
     let event: stripe::StripeEvent = serde_json::from_slice(body.as_ref())
         .map_err(|_| AppError::BadRequest("invalid stripe webhook payload".to_owned()))?;
 
+    // Begin a transaction so the event is only recorded as processed when
+    // all side effects succeed.  If processing fails the transaction rolls
+    // back and Stripe can safely retry the webhook.
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+
     let inserted = sqlx::query_scalar::<_, String>(
         r#"
         INSERT INTO payment_webhook_events (stripe_event_id, event_type, payload)
@@ -266,7 +271,7 @@ pub async fn webhook(
     .bind(event.id.as_str())
     .bind(event.event_type.as_str())
     .bind(serde_json::from_slice::<serde_json::Value>(body.as_ref()).unwrap_or_default())
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     if inserted.is_none() {
@@ -282,25 +287,27 @@ pub async fn webhook(
                 .map_err(|_| AppError::BadRequest("invalid checkout session payload".to_owned()))?;
 
             if session.mode.as_deref() == Some("subscription") {
-                apply_subscription_checkout(&state, session).await?;
+                apply_subscription_checkout(&state, &mut tx, session).await?;
             } else if session.mode.as_deref() == Some("payment") {
-                apply_sparks_checkout(&state, session).await?;
+                apply_sparks_checkout(&mut tx, session).await?;
             }
         }
         "customer.subscription.updated" | "customer.subscription.created" => {
             let subscription: stripe::StripeSubscription =
                 serde_json::from_value(event.data.object)
                     .map_err(|_| AppError::BadRequest("invalid subscription payload".to_owned()))?;
-            upsert_subscription_from_event(&state, &subscription).await?;
+            upsert_subscription_from_event(&mut tx, &subscription).await?;
         }
         "customer.subscription.deleted" => {
             let subscription: stripe::StripeSubscription =
                 serde_json::from_value(event.data.object)
                     .map_err(|_| AppError::BadRequest("invalid subscription payload".to_owned()))?;
-            mark_subscription_canceled(&state, &subscription).await?;
+            mark_subscription_canceled(&mut tx, &subscription).await?;
         }
         _ => {}
     }
+
+    tx.commit().await.map_err(|_| AppError::Internal)?;
 
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -1110,6 +1117,7 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
 
 async fn apply_subscription_checkout(
     state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     session: stripe::CheckoutSession,
 ) -> AppResult<()> {
     let subscription_id = session.subscription.clone().ok_or_else(|| {
@@ -1145,25 +1153,26 @@ async fn apply_subscription_checkout(
     .bind(subscription.status.as_str())
     .bind(stripe::timestamp_to_utc(subscription.current_period_start))
     .bind(stripe::timestamp_to_utc(subscription.current_period_end))
-    .execute(&state.db)
+    .execute(&mut **tx)
     .await?;
 
+    // Idempotency: only activate premium if user is not already premium
     sqlx::query(
         r#"
         UPDATE users
         SET is_premium = TRUE, updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND is_premium = FALSE
         "#,
     )
     .bind(user_id)
-    .execute(&state.db)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())
 }
 
 async fn apply_sparks_checkout(
-    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     session: stripe::CheckoutSession,
 ) -> AppResult<()> {
     if session.payment_status.as_deref() != Some("paid") {
@@ -1188,24 +1197,21 @@ async fn apply_sparks_checkout(
     .bind(session.id.as_str())
     .bind(user_id)
     .bind(sparks_amount)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut **tx)
     .await?;
 
     if inserted.is_none() {
         return Ok(());
     }
 
-    let mut tx = ledger::begin_tx(state).await?;
-    let _ =
-        ledger::apply_spark_transaction(&mut tx, user_id, sparks_amount, TxType::Purchase, None)
-            .await?;
-    ledger::commit(tx).await?;
+    ledger::apply_spark_transaction(tx, user_id, sparks_amount, TxType::Purchase, None)
+        .await?;
 
     Ok(())
 }
 
 async fn upsert_subscription_from_event(
-    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subscription: &stripe::StripeSubscription,
 ) -> AppResult<()> {
     let user_id = sqlx::query_scalar::<_, Uuid>(
@@ -1216,7 +1222,7 @@ async fn upsert_subscription_from_event(
         "#,
     )
     .bind(subscription.id.as_str())
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut **tx)
     .await?;
 
     let Some(user_id) = user_id else {
@@ -1236,30 +1242,31 @@ async fn upsert_subscription_from_event(
     .bind(subscription.status.as_str())
     .bind(stripe::timestamp_to_utc(subscription.current_period_start))
     .bind(stripe::timestamp_to_utc(subscription.current_period_end))
-    .execute(&state.db)
+    .execute(&mut **tx)
     .await?;
 
     let premium_active = matches!(
         subscription.status.as_str(),
         "active" | "trialing" | "past_due"
     );
+    // Idempotency: only update premium status if it actually changed
     sqlx::query(
         r#"
         UPDATE users
         SET is_premium = $2, updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND is_premium IS DISTINCT FROM $2
         "#,
     )
     .bind(user_id)
     .bind(premium_active)
-    .execute(&state.db)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())
 }
 
 async fn mark_subscription_canceled(
-    state: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subscription: &stripe::StripeSubscription,
 ) -> AppResult<()> {
     let user_id = sqlx::query_scalar::<_, Uuid>(
@@ -1270,7 +1277,7 @@ async fn mark_subscription_canceled(
         "#,
     )
     .bind(subscription.id.as_str())
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut **tx)
     .await?;
 
     let Some(user_id) = user_id else {
@@ -1285,18 +1292,19 @@ async fn mark_subscription_canceled(
         "#,
     )
     .bind(subscription.id.as_str())
-    .execute(&state.db)
+    .execute(&mut **tx)
     .await?;
 
+    // Idempotency: only deactivate premium if currently active
     sqlx::query(
         r#"
         UPDATE users
         SET is_premium = FALSE, updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND is_premium = TRUE
         "#,
     )
     .bind(user_id)
-    .execute(&state.db)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())
