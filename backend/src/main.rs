@@ -24,7 +24,7 @@ use axum::{
 };
 use sqlx::PgPool;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{auth::jwt::JwtSettings, config::AppConfig};
 
@@ -71,15 +71,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     matchmaking::matcher::spawn_matcher(state.clone());
     payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
-    let cors = if config.cors_origin == "*" {
-        CorsLayer::very_permissive()
-    } else {
+    if config.cors_origin == "*" {
+        warn!(
+            "CORS_ORIGIN is set to \"*\" — all origins are allowed. \
+             This is unsafe in production; set CORS_ORIGIN to a specific origin."
+        );
+    }
+
+    let cors = {
         let origin = config
             .cors_origin
             .parse::<axum::http::HeaderValue>()
             .expect("invalid CORS_ORIGIN header value");
 
-        CorsLayer::new().allow_origin(origin)
+        CorsLayer::new()
+            .allow_origin(origin)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
     };
 
     let api = Router::new()
