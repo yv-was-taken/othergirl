@@ -5,7 +5,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    auth::jwt::{verify_token, JwtSettings},
+    auth::jwt::{is_token_revoked, verify_token, JwtSettings},
     error::{AppError, AppResult},
 };
 
@@ -16,13 +16,15 @@ pub struct AuthUser {
 
 impl<S> FromRequestParts<S> for AuthUser
 where
-    JwtSettings: axum::extract::FromRef<S>,
+    JwtSettings: FromRef<S>,
+    redis::Client: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> AppResult<Self> {
         let jwt_settings = JwtSettings::from_ref(state);
+        let redis = redis::Client::from_ref(state);
 
         let header = parts
             .headers
@@ -35,6 +37,11 @@ where
             .ok_or_else(|| AppError::Unauthorized("malformed bearer token".to_owned()))?;
 
         let claims = verify_token(token, &jwt_settings)?;
+
+        if is_token_revoked(&claims.jti, &redis).await? {
+            return Err(AppError::Unauthorized("token has been revoked".to_owned()));
+        }
+
         let user_id = Uuid::parse_str(&claims.sub)
             .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
 
