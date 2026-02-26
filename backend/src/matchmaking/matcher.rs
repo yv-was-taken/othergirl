@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use rand::seq::SliceRandom;
 use redis::AsyncCommands;
+use tokio::task::JoinHandle;
 use tokio::time::interval;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -11,17 +12,26 @@ use crate::{
     AppState,
 };
 
-pub fn spawn_matcher(state: AppState) {
+pub fn spawn_matcher(
+    state: AppState,
+    cancel: tokio_util::sync::CancellationToken,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_millis(state.config.matcher_interval_ms));
 
         loop {
-            ticker.tick().await;
+            tokio::select! {
+                _ = ticker.tick() => {}
+                _ = cancel.cancelled() => {
+                    info!("matcher received shutdown signal, exiting");
+                    break;
+                }
+            }
             if let Err(err) = run_match_cycle(&state).await {
                 error!(?err, "matcher cycle failed");
             }
         }
-    });
+    })
 }
 
 async fn run_match_cycle(state: &AppState) -> Result<(), crate::error::AppError> {
