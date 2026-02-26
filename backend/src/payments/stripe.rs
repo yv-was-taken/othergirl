@@ -8,6 +8,11 @@ use crate::error::{AppError, AppResult};
 
 const STRIPE_BASE: &str = "https://api.stripe.com/v1";
 
+/// Single shared HTTP client for all Stripe API calls.  Creating a new
+/// `reqwest::Client` per request is expensive (TLS session setup, connection
+/// pool allocation) and prevents HTTP keep-alive from being reused.  Every
+/// public function in this module MUST route through `get_json` or
+/// `post_form_with_idempotency` which use this static client.
 static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> =
     std::sync::LazyLock::new(reqwest::Client::new);
 const WEBHOOK_TOLERANCE_SECONDS: i64 = 5 * 60;
