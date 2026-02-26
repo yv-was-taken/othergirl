@@ -156,17 +156,20 @@ pub async fn update_my_flare(
 ) -> AppResult<Json<serde_json::Value>> {
     let desired = payload.flare_item_ids;
 
+    let mut tx = state.db.begin().await?;
+
     if !desired.is_empty() {
         let owned_count = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT COUNT(*)::BIGINT
             FROM user_flare
             WHERE user_id = $1 AND flare_item_id = ANY($2)
+            FOR UPDATE
             "#,
         )
         .bind(auth_user.user_id)
         .bind(&desired)
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await?;
 
         if owned_count != desired.len() as i64 {
@@ -175,8 +178,6 @@ pub async fn update_my_flare(
             ));
         }
     }
-
-    let mut tx = state.db.begin().await?;
 
     sqlx::query(
         r#"
