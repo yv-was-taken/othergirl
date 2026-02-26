@@ -32,6 +32,7 @@
 
   let socket: ChatSocket | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
+  let destroyed = false;
 
   let keepPromptOpen = $state(false);
   let connectionError = $state('');
@@ -42,8 +43,12 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
     socket?.close();
-    if (statusTimer) clearInterval(statusTimer);
+    if (statusTimer) {
+      clearInterval(statusTimer);
+      statusTimer = null;
+    }
   });
 
   async function loadCategories() {
@@ -123,8 +128,11 @@
 
   async function startQueuePolling() {
     if (statusTimer) clearInterval(statusTimer);
+    if (destroyed) return;
 
     statusTimer = setInterval(async () => {
+      if (destroyed) return;
+
       const state = get(auth);
       if (!state.token) return;
 
@@ -134,6 +142,8 @@
           | { state: 'queued'; position: number; estimated_wait_seconds: number; queue: string }
           | { state: 'matched'; chat_id: string }
         >('/api/matchmaking/status');
+
+        if (destroyed) return;
 
         if (status.state === 'queued') {
           setQueue(status.position, status.estimated_wait_seconds);
