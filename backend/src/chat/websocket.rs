@@ -835,10 +835,8 @@ async fn resolve_partner_payload(
     chat_id: Uuid,
     requester_id: Uuid,
 ) -> AppResult<serde_json::Value> {
-    let partner_id = queue::resolve_partner_for_chat(state, chat_id, requester_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
-
+    // Single query: resolve the partner from the chats table and fetch their
+    // profile in one round-trip instead of two separate queries.
     let row = sqlx::query_as::<_, (Uuid, String, String, bool, Option<Vec<String>>, serde_json::Value)>(
         r#"
         SELECT
@@ -847,11 +845,11 @@ async fn resolve_partner_payload(
             u.bio,
             u.is_premium,
             ARRAY(
-                SELECT c.slug
+                SELECT cat.slug
                 FROM user_interests ui
-                JOIN categories c ON c.id = ui.category_id
+                JOIN categories cat ON cat.id = ui.category_id
                 WHERE ui.user_id = u.id
-                ORDER BY c.slug
+                ORDER BY cat.slug
             ) AS interest_slugs,
             COALESCE(
                 (SELECT jsonb_object_agg(fi.item_type, fi.asset_data)
@@ -860,11 +858,16 @@ async fn resolve_partner_payload(
                  WHERE uf.user_id = u.id AND uf.is_equipped = TRUE),
                 '{}'::jsonb
             ) AS flare
-        FROM users u
-        WHERE u.id = $1
+        FROM chats c
+        JOIN users u ON u.id = CASE
+            WHEN c.user_a_id = $2 THEN c.user_b_id
+            ELSE c.user_a_id
+        END
+        WHERE c.id = $1
         "#,
     )
-    .bind(partner_id)
+    .bind(chat_id)
+    .bind(requester_id)
     .fetch_optional(&state.db)
     .await?;
 
@@ -882,14 +885,7 @@ async fn resolve_partner_payload(
         }));
     }
 
-    Ok(serde_json::json!({
-        "id": partner_id,
-        "username": "stranger",
-        "bio": "",
-        "badges": [],
-        "interests": [],
-        "flare": {}
-    }))
+    Err(AppError::NotFound("chat not found".to_owned()))
 }
 
 async fn set_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
