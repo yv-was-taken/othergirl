@@ -32,6 +32,7 @@
 
   let socket: ChatSocket | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
+  let pollAbort: AbortController | null = null;
   let destroyed = false;
 
   let keepPromptOpen = $state(false);
@@ -45,10 +46,10 @@
   onDestroy(() => {
     destroyed = true;
     socket?.close();
-    if (statusTimer) {
-      clearInterval(statusTimer);
-      statusTimer = null;
-    }
+    clearInterval(statusTimer ?? undefined);
+    statusTimer = null;
+    pollAbort?.abort();
+    pollAbort = null;
   });
 
   async function loadCategories() {
@@ -127,8 +128,13 @@
   }
 
   async function startQueuePolling() {
-    if (statusTimer) clearInterval(statusTimer);
+    clearInterval(statusTimer ?? undefined);
+    statusTimer = null;
+    pollAbort?.abort();
+    pollAbort = null;
     if (destroyed) return;
+
+    pollAbort = new AbortController();
 
     statusTimer = setInterval(async () => {
       if (destroyed) return;
@@ -141,7 +147,7 @@
           | { state: 'idle' }
           | { state: 'queued'; position: number; estimated_wait_seconds: number; queue: string }
           | { state: 'matched'; chat_id: string }
-        >('/api/matchmaking/status');
+        >('/api/matchmaking/status', { signal: pollAbort?.signal });
 
         if (destroyed) return;
 
@@ -155,7 +161,7 @@
           toast.success('Matched');
         }
       } catch {
-        // Keep polling quiet on transient errors.
+        // Keep polling quiet on transient errors and aborted requests.
       }
     }, 1500);
   }
