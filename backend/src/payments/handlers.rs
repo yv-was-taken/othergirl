@@ -53,11 +53,44 @@ pub struct CashoutRequest {
     pub amount: i64,
 }
 
-const CASHOUT_STATUS_PENDING: &str = "pending";
-const CASHOUT_STATUS_COMPLETED: &str = "completed";
-const CASHOUT_STATUS_FAILED: &str = "failed";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CashoutStatus {
+    Pending,
+    Completed,
+    Failed,
+}
+
+impl CashoutStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl std::fmt::Display for CashoutStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for CashoutStatus {
+    type Error = ();
+    fn try_from(s: &str) -> Result<Self, ()> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err(()),
+        }
+    }
+}
+
 const CASHOUT_RECONCILE_INTERVAL_SECS: u64 = 60;
-const CASHOUT_RECONCILE_STALE_SECS: i64 = 120;
+const CASHOUT_RECONCILE_MAX_BACKOFF_SECS: u64 = 15 * 60;
+const CASHOUT_RECONCILE_STALE_SECS: i64 = 300;
 const CASHOUT_RECONCILE_BATCH_SIZE: i64 = 50;
 const CASHOUT_RECONCILE_MAX_RETRY_AGE_SECS: i64 = 20 * 60 * 60;
 const CASHOUT_MANUAL_RECONCILE_REASON: &str =
@@ -499,7 +532,7 @@ pub async fn cashout_request(
                 "cashout_request_id": cashout_request_id,
                 "requested": payload.amount,
                 "new_balance": balance,
-                "status": CASHOUT_STATUS_PENDING
+                "status": CashoutStatus::Pending.as_str()
             })));
         }
     };
@@ -509,21 +542,21 @@ pub async fn cashout_request(
     if !updated {
         let outcome = fetch_cashout_request_outcome(&state, cashout_request_id).await?;
         match outcome {
-            Some((status, stored_transfer_id)) if status == CASHOUT_STATUS_COMPLETED => {
+            Some((status, stored_transfer_id)) if status == CashoutStatus::Completed => {
                 return Ok(Json(serde_json::json!({
                     "cashout_request_id": cashout_request_id,
                     "requested": payload.amount,
                     "new_balance": balance,
-                    "status": CASHOUT_STATUS_COMPLETED,
+                    "status": CashoutStatus::Completed.as_str(),
                     "stripe_transfer_id": stored_transfer_id.unwrap_or(transfer_id)
                 })));
             }
-            Some((status, _)) if status == CASHOUT_STATUS_PENDING => {
+            Some((status, _)) if status == CashoutStatus::Pending => {
                 return Err(AppError::Conflict(
                     "cashout request is still pending".to_owned(),
                 ));
             }
-            Some((status, _)) if status == CASHOUT_STATUS_FAILED => {
+            Some((status, _)) if status == CashoutStatus::Failed => {
                 return Err(AppError::Conflict("cashout request failed".to_owned()));
             }
             Some(_) => {
@@ -539,7 +572,7 @@ pub async fn cashout_request(
         "cashout_request_id": cashout_request_id,
         "requested": payload.amount,
         "new_balance": balance,
-        "status": CASHOUT_STATUS_COMPLETED,
+        "status": CashoutStatus::Completed.as_str(),
         "stripe_transfer_id": transfer_id
     })))
 }
@@ -589,18 +622,39 @@ pub async fn cashout_status(
 
 pub fn spawn_cashout_reconciler(state: AppState) {
     tokio::spawn(async move {
-        let interval = std::time::Duration::from_secs(CASHOUT_RECONCILE_INTERVAL_SECS);
+        let base_interval = std::time::Duration::from_secs(CASHOUT_RECONCILE_INTERVAL_SECS);
+        let max_backoff = std::time::Duration::from_secs(CASHOUT_RECONCILE_MAX_BACKOFF_SECS);
+        let mut consecutive_rate_limits: u32 = 0;
 
         loop {
-            if let Err(err) = reconcile_stale_pending_cashouts(&state).await {
-                tracing::error!("cashout reconciliation failed: {err}");
+            match reconcile_stale_pending_cashouts(&state).await {
+                Ok(rate_limited) if rate_limited => {
+                    consecutive_rate_limits = consecutive_rate_limits.saturating_add(1);
+                    let backoff = base_interval
+                        .saturating_mul(1 << consecutive_rate_limits.min(6))
+                        .min(max_backoff);
+                    tracing::warn!(
+                        "cashout reconciler rate-limited by stripe, backing off for {}s",
+                        backoff.as_secs()
+                    );
+                    tokio::time::sleep(backoff).await;
+                }
+                Ok(_) => {
+                    consecutive_rate_limits = 0;
+                    tokio::time::sleep(base_interval).await;
+                }
+                Err(err) => {
+                    tracing::error!("cashout reconciliation failed: {err}");
+                    consecutive_rate_limits = 0;
+                    tokio::time::sleep(base_interval).await;
+                }
             }
-            tokio::time::sleep(interval).await;
         }
     });
 }
 
-async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<()> {
+/// Returns `Ok(true)` if Stripe rate-limited us during this pass (caller should back off).
+async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<bool> {
     let resolved = mark_old_pending_cashouts_for_manual_reconciliation(state).await?;
     if resolved > 0 {
         tracing::info!(
@@ -626,19 +680,23 @@ async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<()> {
     .await?;
 
     if pending.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let stripe_secret = match stripe_secret(state) {
         Ok(secret) => secret,
         Err(err) => {
             tracing::warn!("cashout reconciliation skipped: {err}");
-            return Ok(());
+            return Ok(false);
         }
     };
 
+    let mut was_rate_limited = false;
     for (cashout_request_id, user_id, amount, stripe_account_id, expected_updated_at) in pending {
-        if let Err(err) = reconcile_pending_cashout(
+        if was_rate_limited {
+            break;
+        }
+        match reconcile_pending_cashout(
             state,
             stripe_secret.as_str(),
             cashout_request_id,
@@ -649,13 +707,19 @@ async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<()> {
         )
         .await
         {
-            tracing::error!(
-                "cashout reconciliation failed for request {cashout_request_id}: {err}"
-            );
+            Ok(()) => {}
+            Err(AppError::TooManyRequests(_)) => {
+                was_rate_limited = true;
+            }
+            Err(err) => {
+                tracing::error!(
+                    "cashout reconciliation failed for request {cashout_request_id}: {err}"
+                );
+            }
         }
     }
 
-    Ok(())
+    Ok(was_rate_limited)
 }
 
 async fn reconcile_pending_cashout(
@@ -737,7 +801,7 @@ async fn claim_pending_cashout_for_reconciliation(
         "#,
     )
     .bind(cashout_request_id)
-    .bind(CASHOUT_STATUS_PENDING)
+    .bind(CashoutStatus::Pending.as_str())
     .bind(expected_updated_at)
     .execute(&state.db)
     .await?;
@@ -849,8 +913,8 @@ fn map_cashout_insert_error(err: sqlx::Error) -> AppError {
 async fn fetch_cashout_request_outcome(
     state: &AppState,
     cashout_request_id: Uuid,
-) -> AppResult<Option<(String, Option<String>)>> {
-    sqlx::query_as::<_, (String, Option<String>)>(
+) -> AppResult<Option<(CashoutStatus, Option<String>)>> {
+    let row = sqlx::query_as::<_, (String, Option<String>)>(
         r#"
         SELECT status, stripe_transfer_id
         FROM cashout_requests
@@ -859,8 +923,12 @@ async fn fetch_cashout_request_outcome(
     )
     .bind(cashout_request_id)
     .fetch_optional(&state.db)
-    .await
-    .map_err(Into::into)
+    .await?;
+
+    Ok(row.map(|(status, transfer_id)| {
+        let parsed = CashoutStatus::try_from(status.as_str()).unwrap_or(CashoutStatus::Pending);
+        (parsed, transfer_id)
+    }))
 }
 
 async fn mark_cashout_retry_pending(
@@ -879,7 +947,7 @@ async fn mark_cashout_retry_pending(
     )
     .bind(cashout_request_id)
     .bind(failure_reason)
-    .bind(CASHOUT_STATUS_PENDING)
+    .bind(CashoutStatus::Pending.as_str())
     .execute(&state.db)
     .await?;
 
@@ -893,10 +961,12 @@ async fn mark_old_pending_cashouts_for_manual_reconciliation(state: &AppState) -
         FROM cashout_requests
         WHERE status = $1
           AND created_at < NOW() - ($2::bigint * INTERVAL '1 second')
+        LIMIT $3
         "#,
     )
-    .bind(CASHOUT_STATUS_PENDING)
+    .bind(CashoutStatus::Pending.as_str())
     .bind(CASHOUT_RECONCILE_MAX_RETRY_AGE_SECS)
+    .bind(CASHOUT_RECONCILE_BATCH_SIZE)
     .fetch_all(&state.db)
     .await?;
 
