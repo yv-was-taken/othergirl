@@ -279,7 +279,7 @@ fn is_valid_emote_token(token: &str) -> bool {
 
 fn safe_extension(extension: &str) -> &str {
     match extension {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => extension,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => extension,
         _ => "png",
     }
 }
