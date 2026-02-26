@@ -736,10 +736,13 @@ async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<bool> {
 
     let result = reconcile_stale_pending_cashouts_inner(state).await;
 
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+    if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(CASHOUT_RECONCILER_LOCK_ID)
         .execute(&state.db)
-        .await;
+        .await
+    {
+        tracing::error!(?err, "failed to release cashout reconciler advisory lock");
+    }
 
     result
 }

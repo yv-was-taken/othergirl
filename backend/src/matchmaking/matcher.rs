@@ -128,8 +128,8 @@ async fn try_match_queue(
         )
         .await?;
 
-        let _: i64 = conn
-            .publish(
+        if let Err(err) = conn
+            .publish::<_, _, i64>(
                 "matchmaking:matched",
                 serde_json::json!({
                     "chat_id": chat_id,
@@ -139,6 +139,8 @@ async fn try_match_queue(
                 .to_string(),
             )
             .await
-            .unwrap_or(0);
+        {
+            error!(?err, "failed to publish match notification to Redis");
+        }
     }
 }
