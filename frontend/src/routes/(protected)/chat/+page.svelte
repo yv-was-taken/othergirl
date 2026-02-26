@@ -36,6 +36,12 @@
   let keepPromptOpen = $state(false);
   let connectionError = $state('');
 
+  // Typing indicator debounce/throttle state
+  let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+  let lastTypingSentAt = 0;
+  const TYPING_THROTTLE_MS = 500;
+  const TYPING_STOP_DELAY_MS = 2000;
+
   onMount(async () => {
     await Promise.all([loadCategories(), loadLanguages()]);
     startQueuePolling();
@@ -44,6 +50,7 @@
   onDestroy(() => {
     socket?.close();
     if (statusTimer) clearInterval(statusTimer);
+    if (typingTimeout) clearTimeout(typingTimeout);
   });
 
   async function loadCategories() {
@@ -232,7 +239,31 @@
   }
 
   function sendTyping(detail: { isTyping: boolean }) {
-    socket?.send({ type: 'typing', is_typing: detail.isTyping });
+    // Clear any pending stop-typing timeout
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+      typingTimeout = null;
+    }
+
+    if (detail.isTyping) {
+      const now = Date.now();
+      // Throttle: only send isTyping:true at most once per 500ms
+      if (now - lastTypingSentAt >= TYPING_THROTTLE_MS) {
+        socket?.send({ type: 'typing', is_typing: true });
+        lastTypingSentAt = now;
+      }
+
+      // Schedule stop-typing after 2s of no input
+      typingTimeout = setTimeout(() => {
+        socket?.send({ type: 'typing', is_typing: false });
+        lastTypingSentAt = 0;
+        typingTimeout = null;
+      }, TYPING_STOP_DELAY_MS);
+    } else {
+      // Explicitly stopped typing (e.g. sent message or cleared input)
+      socket?.send({ type: 'typing', is_typing: false });
+      lastTypingSentAt = 0;
+    }
   }
 
   function keepVote(detail: { keep: boolean }) {
@@ -296,6 +327,11 @@
   }
 
   function leaveChat() {
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+      typingTimeout = null;
+    }
+    lastTypingSentAt = 0;
     socket?.send({ type: 'leave' });
     socket?.close();
     socket = null;
