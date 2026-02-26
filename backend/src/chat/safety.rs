@@ -1,4 +1,3 @@
-use redis::AsyncCommands;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -56,10 +55,20 @@ async fn is_flooding(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResul
     let key = format!("msg_rate:{chat_id}:{user_id}");
 
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
-    let count: i64 = conn.incr(&key, 1_i64).await?;
-    if count == 1 {
-        let _: bool = conn.expire(&key, 5_i64).await?;
-    }
+
+    // Atomic Lua script: INCR + conditional EXPIRE in a single Redis eval,
+    // eliminating the TOCTOU race between separate INCR and EXPIRE calls.
+    let script = redis::Script::new(
+        r#"
+        local count = redis.call('INCR', KEYS[1])
+        if count == 1 then
+            redis.call('EXPIRE', KEYS[1], ARGV[1])
+        end
+        return count
+        "#,
+    );
+
+    let count: i64 = script.key(&key).arg(5_i64).invoke_async(&mut conn).await?;
 
     Ok(count > 10)
 }
