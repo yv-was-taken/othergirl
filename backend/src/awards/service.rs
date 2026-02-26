@@ -49,6 +49,13 @@ pub async fn send_award_internal(
     }
 
     let recipient_id = if chat.0 == sender_id { chat.1 } else { chat.0 };
+
+    if recipient_id == sender_id {
+        return Err(AppError::Forbidden(
+            "cannot send awards to yourself".to_owned(),
+        ));
+    }
+
     let recipient_cut = (spark_amount * 70) / 100;
     let award_id = Uuid::new_v4();
 
