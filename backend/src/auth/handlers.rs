@@ -1,4 +1,8 @@
-use axum::{extract::State, Json};
+use axum::{
+    extract::State,
+    http::{header, HeaderMap},
+    Json,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -7,7 +11,7 @@ use validator::Validate;
 
 use crate::{
     auth::{
-        jwt::issue_token,
+        jwt::{issue_token, revoke_token, verify_token},
         middleware::AuthUser,
         password::{hash_password, verify_password},
     },
@@ -176,4 +180,24 @@ pub async fn refresh(
     let token = issue_token(auth_user.user_id, &state.jwt)?;
 
     Ok(Json(serde_json::json!({ "token": token })))
+}
+
+pub async fn logout(
+    State(state): State<AppState>,
+    _auth_user: AuthUser,
+    headers: HeaderMap,
+) -> AppResult<Json<serde_json::Value>> {
+    let header_value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AppError::Unauthorized("missing authorization header".to_owned()))?;
+
+    let token = header_value
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| AppError::Unauthorized("malformed bearer token".to_owned()))?;
+
+    let claims = verify_token(token, &state.jwt)?;
+    revoke_token(&claims, &state.redis).await?;
+
+    Ok(Json(serde_json::json!({ "message": "logged out" })))
 }
