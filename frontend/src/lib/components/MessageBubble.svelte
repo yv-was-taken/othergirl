@@ -12,7 +12,7 @@
     mine?: boolean;
   } = $props();
 
-  const rendered = $derived(applyEmotes(renderMarkdown(message.content)));
+  const rendered = $derived(renderMarkdown(applyEmotes(message.content)));
 </script>
 
 <div class={`max-w-[85%] rounded-2xl px-4 py-2 text-sm shadow ${mine ? 'ml-auto bg-[var(--bubble-mine)]' : 'bg-[var(--bubble-theirs)]'}`}>
