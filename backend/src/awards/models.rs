@@ -23,3 +23,11 @@ pub struct SendAwardRequest {
     #[validate(range(min = 1))]
     pub spark_amount: i64,
 }
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct AwardsPagination {
+    #[validate(range(min = 1, max = 100))]
+    pub limit: Option<i64>,
+    #[validate(range(min = 0))]
+    pub offset: Option<i64>,
+}

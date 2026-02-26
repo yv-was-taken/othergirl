@@ -1,10 +1,13 @@
-use axum::{extract::State, Json};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
 use validator::Validate;
 
 use crate::{
     auth::middleware::AuthUser,
     awards::{
-        models::{Award, SendAwardRequest},
+        models::{Award, AwardsPagination, SendAwardRequest},
         service,
     },
     error::AppResult,
@@ -40,17 +43,25 @@ pub async fn send_award(
 pub async fn list_awards(
     State(state): State<AppState>,
     auth_user: AuthUser,
+    Query(pagination): Query<AwardsPagination>,
 ) -> AppResult<Json<serde_json::Value>> {
+    pagination.validate()?;
+
+    let limit = pagination.limit.unwrap_or(50).clamp(1, 100);
+    let offset = pagination.offset.unwrap_or(0).max(0);
+
     let awards = sqlx::query_as::<_, Award>(
         r#"
         SELECT id, sender_id, recipient_id, chat_id, award_type, spark_amount, recipient_cut, created_at
         FROM awards
         WHERE recipient_id = $1 OR sender_id = $1
         ORDER BY created_at DESC
-        LIMIT 100
+        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(auth_user.user_id)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db)
     .await?;
 
