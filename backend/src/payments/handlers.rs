@@ -106,7 +106,7 @@ pub async fn subscribe(
         .config
         .stripe_premium_price_id
         .clone()
-        .ok_or_else(|| AppError::Conflict("premium stripe price is not configured".to_owned()))?;
+        .ok_or_else(|| AppError::ServiceUnavailable("premium stripe price is not configured".to_owned()))?;
 
     let success_url = payload
         .success_url
@@ -242,7 +242,7 @@ pub async fn webhook(
 ) -> AppResult<Json<serde_json::Value>> {
     let webhook_secret =
         state.config.stripe_webhook_secret.clone().ok_or_else(|| {
-            AppError::Forbidden("stripe webhook secret is not configured".to_owned())
+            AppError::ServiceUnavailable("stripe webhook secret is not configured".to_owned())
         })?;
 
     let signature = headers
@@ -620,7 +620,7 @@ pub async fn cashout_status(
     Ok(Json(serde_json::json!({ "connect": connect })))
 }
 
-pub fn spawn_cashout_reconciler(state: AppState) {
+pub fn spawn_cashout_reconciler(state: AppState, cancel: tokio_util::sync::CancellationToken) {
     tokio::spawn(async move {
         let base_interval = std::time::Duration::from_secs(CASHOUT_RECONCILE_INTERVAL_SECS);
         let max_backoff = std::time::Duration::from_secs(CASHOUT_RECONCILE_MAX_BACKOFF_SECS);
@@ -637,24 +637,59 @@ pub fn spawn_cashout_reconciler(state: AppState) {
                         "cashout reconciler rate-limited by stripe, backing off for {}s",
                         backoff.as_secs()
                     );
-                    tokio::time::sleep(backoff).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(backoff) => {}
+                        _ = cancel.cancelled() => break,
+                    }
                 }
                 Ok(_) => {
                     consecutive_rate_limits = 0;
-                    tokio::time::sleep(base_interval).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(base_interval) => {}
+                        _ = cancel.cancelled() => break,
+                    }
                 }
                 Err(err) => {
                     tracing::error!("cashout reconciliation failed: {err}");
                     consecutive_rate_limits = 0;
-                    tokio::time::sleep(base_interval).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(base_interval) => {}
+                        _ = cancel.cancelled() => break,
+                    }
                 }
             }
         }
+
+        tracing::info!("cashout reconciler stopped");
     });
 }
 
+const CASHOUT_RECONCILER_LOCK_ID: i64 = 0x4F47_CA50; // "OG_CASHOUT" in hex-ish
+
 /// Returns `Ok(true)` if Stripe rate-limited us during this pass (caller should back off).
 async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<bool> {
+    let locked = sqlx::query_scalar::<_, bool>(
+        "SELECT pg_try_advisory_lock($1)",
+    )
+    .bind(CASHOUT_RECONCILER_LOCK_ID)
+    .fetch_one(&state.db)
+    .await?;
+
+    if !locked {
+        return Ok(false);
+    }
+
+    let result = reconcile_stale_pending_cashouts_inner(state).await;
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(CASHOUT_RECONCILER_LOCK_ID)
+        .execute(&state.db)
+        .await;
+
+    result
+}
+
+async fn reconcile_stale_pending_cashouts_inner(state: &AppState) -> AppResult<bool> {
     let resolved = mark_old_pending_cashouts_for_manual_reconciliation(state).await?;
     if resolved > 0 {
         tracing::info!(
@@ -897,7 +932,8 @@ fn app_error_message(err: &AppError) -> String {
         | AppError::Forbidden(message)
         | AppError::NotFound(message)
         | AppError::Conflict(message)
-        | AppError::TooManyRequests(message) => message.clone(),
+        | AppError::TooManyRequests(message)
+        | AppError::ServiceUnavailable(message) => message.clone(),
         AppError::Internal => "internal server error".to_owned(),
     }
 }
@@ -1283,5 +1319,5 @@ fn stripe_secret(state: &AppState) -> AppResult<String> {
         .config
         .stripe_secret_key
         .clone()
-        .ok_or_else(|| AppError::Conflict("stripe is not configured".to_owned()))
+        .ok_or_else(|| AppError::ServiceUnavailable("stripe is not configured".to_owned()))
 }

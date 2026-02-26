@@ -7,6 +7,9 @@ use sha2::Sha256;
 use crate::error::{AppError, AppResult};
 
 const STRIPE_BASE: &str = "https://api.stripe.com/v1";
+
+static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(reqwest::Client::new);
 const WEBHOOK_TOLERANCE_SECONDS: i64 = 5 * 60;
 type HmacSha256 = Hmac<Sha256>;
 
@@ -181,8 +184,7 @@ async fn get_json<T>(secret_key: &str, path: &str) -> AppResult<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    let client = reqwest::Client::new();
-    let response = client
+    let response = HTTP_CLIENT
         .get(format!("{STRIPE_BASE}{path}"))
         .bearer_auth(secret_key)
         .send()
@@ -208,8 +210,7 @@ async fn post_form_with_idempotency<T>(
 where
     T: serde::de::DeserializeOwned,
 {
-    let client = reqwest::Client::new();
-    let mut request = client
+    let mut request = HTTP_CLIENT
         .post(format!("{STRIPE_BASE}{path}"))
         .bearer_auth(secret_key)
         .form(params);
