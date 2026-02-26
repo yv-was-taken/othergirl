@@ -5,8 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/othergirl/cloudflared.env
-ExecStart=/usr/bin/env cloudflared tunnel --no-autoupdate run --token ${CLOUDFLARED_TUNNEL_TOKEN}
+# Token is loaded via LoadCredential and exported as TUNNEL_TOKEN so that
+# cloudflared reads it from its environment instead of the command line.
+# This prevents the secret from being visible in ps aux / /proc/<pid>/cmdline.
+LoadCredential=tunnel-token:/etc/othergirl/tunnel-token
+ExecStart=/bin/sh -c 'export TUNNEL_TOKEN="$(cat %d/tunnel-token)" && exec cloudflared tunnel --no-autoupdate run'
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
