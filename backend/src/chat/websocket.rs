@@ -498,6 +498,10 @@ async fn process_chat_event(
                 .bind(serde_json::json!(safety.reasons))
                 .execute(&state.db)
                 .await?;
+
+                return Err(AppError::BadRequest(
+                    "message rejected by safety filter".to_owned(),
+                ));
             }
 
             state
@@ -510,7 +514,7 @@ async fn process_chat_event(
                         sender_id: user_id,
                         content: trimmed.to_owned(),
                         timestamp: created_at,
-                        flagged: safety.flagged,
+                        flagged: false,
                     },
                 )
                 .await;
