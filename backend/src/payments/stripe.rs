@@ -7,6 +7,9 @@ use sha2::Sha256;
 use crate::error::{AppError, AppResult};
 
 const STRIPE_BASE: &str = "https://api.stripe.com/v1";
+
+static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(reqwest::Client::new);
 const WEBHOOK_TOLERANCE_SECONDS: i64 = 5 * 60;
 type HmacSha256 = Hmac<Sha256>;
 
@@ -101,6 +104,7 @@ pub async fn create_transfer(
     amount: i64,
     currency: &str,
     description: &str,
+    idempotency_key: &str,
 ) -> AppResult<String> {
     #[derive(Debug, Deserialize)]
     struct Transfer {
@@ -114,7 +118,13 @@ pub async fn create_transfer(
         ("description".to_owned(), description.to_owned()),
     ];
 
-    let transfer = post_form::<Transfer>(secret_key, "/transfers", &params).await?;
+    let transfer = post_form_with_idempotency::<Transfer>(
+        secret_key,
+        "/transfers",
+        &params,
+        Some(idempotency_key),
+    )
+    .await?;
     Ok(transfer.id)
 }
 
@@ -174,8 +184,7 @@ async fn get_json<T>(secret_key: &str, path: &str) -> AppResult<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    let client = reqwest::Client::new();
-    let response = client
+    let response = HTTP_CLIENT
         .get(format!("{STRIPE_BASE}{path}"))
         .bearer_auth(secret_key)
         .send()
@@ -189,14 +198,28 @@ async fn post_form<T>(secret_key: &str, path: &str, params: &[(String, String)])
 where
     T: serde::de::DeserializeOwned,
 {
-    let client = reqwest::Client::new();
-    let response = client
+    post_form_with_idempotency(secret_key, path, params, None).await
+}
+
+async fn post_form_with_idempotency<T>(
+    secret_key: &str,
+    path: &str,
+    params: &[(String, String)],
+    idempotency_key: Option<&str>,
+) -> AppResult<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut request = HTTP_CLIENT
         .post(format!("{STRIPE_BASE}{path}"))
         .bearer_auth(secret_key)
-        .form(params)
-        .send()
-        .await
-        .map_err(|_| AppError::Internal)?;
+        .form(params);
+
+    if let Some(idempotency_key) = idempotency_key {
+        request = request.header("Idempotency-Key", idempotency_key);
+    }
+
+    let response = request.send().await.map_err(|_| AppError::Internal)?;
 
     parse_response::<T>(response).await
 }
@@ -216,9 +239,12 @@ where
 }
 
 fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
-    let message = serde_json::from_str::<serde_json::Value>(body)
+    let parsed_error = serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|value| value.get("error").cloned())
+        .and_then(|value| value.get("error").cloned());
+
+    let message = parsed_error
+        .as_ref()
         .and_then(|error| {
             error
                 .get("message")
@@ -227,8 +253,31 @@ fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
         })
         .unwrap_or_else(|| "stripe request failed".to_owned());
 
+    let error_type = parsed_error
+        .as_ref()
+        .and_then(|error| error.get("type").and_then(|v| v.as_str()));
+    let error_code = parsed_error
+        .as_ref()
+        .and_then(|error| error.get("code").and_then(|v| v.as_str()));
+
+    if status == StatusCode::TOO_MANY_REQUESTS || matches!(error_type, Some("rate_limit_error")) {
+        return AppError::TooManyRequests(message);
+    }
+
+    if matches!(error_type, Some("idempotency_error")) {
+        return AppError::BadRequest(message);
+    }
+
+    if matches!(error_code, Some("idempotency_key_in_use")) {
+        return AppError::Conflict(message);
+    }
+
     if status == StatusCode::UNAUTHORIZED {
         return AppError::Unauthorized(message);
+    }
+
+    if status == StatusCode::FORBIDDEN {
+        return AppError::Forbidden(message);
     }
 
     if status.is_client_error() {

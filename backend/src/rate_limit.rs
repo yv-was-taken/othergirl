@@ -15,6 +15,7 @@ use crate::{
 const WINDOW_SECONDS: u64 = 60;
 const MAX_REQUESTS_PER_WINDOW: i64 = 180;
 const MAX_AUTH_REQUESTS_PER_WINDOW: i64 = 40;
+const MAX_CASHOUT_REQUESTS_PER_WINDOW: i64 = 5;
 
 pub async fn middleware(
     State(state): State<AppState>,
@@ -29,18 +30,15 @@ pub async fn middleware(
 
     let source = source_ip_for_request(&request, state.config.trusted_proxy_hops)?.to_string();
 
-    let bucket = if path.starts_with("/api/auth") {
-        "auth"
+    let (bucket, limit) = if path.starts_with("/api/auth") {
+        ("auth", MAX_AUTH_REQUESTS_PER_WINDOW)
+    } else if path.starts_with("/api/cashout") {
+        ("cashout", MAX_CASHOUT_REQUESTS_PER_WINDOW)
     } else {
-        "general"
+        ("general", MAX_REQUESTS_PER_WINDOW)
     };
 
     let key = format!("rate_limit:{bucket}:{source}");
-    let limit = if bucket == "auth" {
-        MAX_AUTH_REQUESTS_PER_WINDOW
-    } else {
-        MAX_REQUESTS_PER_WINDOW
-    };
 
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let count: i64 = conn.incr(&key, 1_i64).await?;

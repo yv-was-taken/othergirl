@@ -179,7 +179,7 @@ fn oauth_identity_from_telegram(
         .config
         .telegram_bot_token
         .clone()
-        .ok_or_else(|| AppError::Conflict("telegram oauth is not configured".to_owned()))?;
+        .ok_or_else(|| AppError::ServiceUnavailable("telegram oauth is not configured".to_owned()))?;
 
     let hash = query
         .hash
@@ -467,9 +467,9 @@ fn oauth_client(state: &AppState, provider: &str) -> AppResult<BasicClient> {
     };
 
     let client_id = client_id
-        .ok_or_else(|| AppError::Conflict(format!("{provider} oauth is not configured")))?;
+        .ok_or_else(|| AppError::ServiceUnavailable(format!("{provider} oauth is not configured")))?;
     let client_secret = client_secret
-        .ok_or_else(|| AppError::Conflict(format!("{provider} oauth is not configured")))?;
+        .ok_or_else(|| AppError::ServiceUnavailable(format!("{provider} oauth is not configured")))?;
 
     let redirect_url = format!(
         "{}/api/auth/oauth/{provider}/callback",
@@ -501,11 +501,11 @@ fn build_telegram_auth_url(state: &AppState, oauth_state: &str) -> AppResult<Str
         .config
         .telegram_bot_token
         .clone()
-        .ok_or_else(|| AppError::Conflict("telegram oauth is not configured".to_owned()))?;
+        .ok_or_else(|| AppError::ServiceUnavailable("telegram oauth is not configured".to_owned()))?;
     let bot_id = token
         .split(':')
         .next()
-        .ok_or_else(|| AppError::Conflict("invalid telegram bot token format".to_owned()))?;
+        .ok_or_else(|| AppError::ServiceUnavailable("invalid telegram bot token format".to_owned()))?;
 
     let callback = format!(
         "{}/api/auth/oauth/telegram/callback?state={}",

@@ -66,7 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chat_hub: chat::websocket::ChatHub::new(),
     };
 
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+
     matchmaking::matcher::spawn_matcher(state.clone());
+    payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
     let cors = if config.cors_origin == "*" {
         CorsLayer::very_permissive()
@@ -135,6 +138,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        info!("shutdown signal received, stopping background jobs…");
+        shutdown_token.cancel();
+    })
     .await?;
 
     Ok(())
