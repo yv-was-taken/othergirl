@@ -431,6 +431,8 @@ async fn find_or_create_oauth_user(
     provider: &str,
     identity: OauthIdentity,
 ) -> AppResult<OauthUserRow> {
+    let mut tx = state.db.begin().await?;
+
     let existing = sqlx::query_as::<_, OauthUserRow>(
         r#"
         SELECT u.id, u.username, u.email, u.is_premium, u.is_age_verified, u.created_at
@@ -441,10 +443,11 @@ async fn find_or_create_oauth_user(
     )
     .bind(provider)
     .bind(identity.provider_id.as_str())
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     if let Some(user) = existing {
+        tx.commit().await?;
         return Ok(user);
     }
 
@@ -459,7 +462,7 @@ async fn find_or_create_oauth_user(
         )
         .bind(username.as_str())
         .bind(identity.email.as_deref())
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await;
 
         let user = match created {
@@ -485,9 +488,10 @@ async fn find_or_create_oauth_user(
         .bind(user.id)
         .bind(provider)
         .bind(identity.provider_id.as_str())
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
+        tx.commit().await?;
         return Ok(user);
     }
 
