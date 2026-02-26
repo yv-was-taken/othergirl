@@ -78,11 +78,11 @@ const MAX_MESSAGES = 200;
 
 export function pushMessage(message: ChatMessage) {
   chat.update((state) => {
-    const updated = [...state.messages, message];
-    if (updated.length > MAX_MESSAGES) {
-      updated.splice(0, updated.length - MAX_MESSAGES);
-    }
-    return { ...state, messages: updated };
+    const messages = [...state.messages, message];
+    return {
+      ...state,
+      messages: messages.length > MAX_MESSAGES ? messages.slice(-MAX_MESSAGES) : messages
+    };
   });
 }
 
