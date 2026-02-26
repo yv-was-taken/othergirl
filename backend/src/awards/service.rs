@@ -6,6 +6,8 @@ use crate::{
     AppState,
 };
 
+const VALID_AWARD_TYPES: &[&str] = &["spark", "fire", "star", "heart", "trophy", "crown"];
+
 #[derive(Debug, serde::Serialize)]
 pub struct AwardOutcome {
     pub award_id: Uuid,
@@ -24,6 +26,12 @@ pub async fn send_award_internal(
     award_type: String,
     spark_amount: i64,
 ) -> AppResult<AwardOutcome> {
+    if !VALID_AWARD_TYPES.contains(&award_type.as_str()) {
+        return Err(AppError::BadRequest(
+            "invalid award type".to_owned(),
+        ));
+    }
+
     if spark_amount <= 0 {
         return Err(AppError::BadRequest(
             "spark_amount must be greater than 0".to_owned(),
@@ -49,6 +57,13 @@ pub async fn send_award_internal(
     }
 
     let recipient_id = if chat.0 == sender_id { chat.1 } else { chat.0 };
+
+    if recipient_id == sender_id {
+        return Err(AppError::Forbidden(
+            "cannot send awards to yourself".to_owned(),
+        ));
+    }
+
     let recipient_cut = (spark_amount * 70) / 100;
     let award_id = Uuid::new_v4();
 

@@ -38,6 +38,20 @@
   let emotePickerOpen = $state(false);
   let inputEl: HTMLInputElement | undefined = $state();
   let emoteBtn: HTMLButtonElement | undefined = $state();
+  let messagesEl: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    // Subscribe to messages array changes
+    messages;
+    if (!messagesEl) return;
+    const { scrollTop, scrollHeight, clientHeight } = messagesEl;
+    const nearBottom = scrollHeight - scrollTop - clientHeight < 100;
+    if (nearBottom) {
+      tick().then(() => {
+        messagesEl!.scrollTop = messagesEl!.scrollHeight;
+      });
+    }
+  });
 
   async function insertEmote(token: string) {
     if (!inputEl) return;
@@ -83,7 +97,7 @@
     </div>
   </div>
 
-  <div class="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+  <div bind:this={messagesEl} class="flex-1 space-y-3 overflow-y-auto px-4 py-4">
     {#if connectionError}
       <div class="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-center text-sm text-red-300">
         {connectionError}

@@ -67,6 +67,7 @@ pub async fn purchase_item(
         SELECT id, price_sparks, is_active
         FROM flare_items
         WHERE id = $1
+        FOR UPDATE
         "#,
     )
     .bind(payload.item_id)
@@ -105,7 +106,7 @@ pub async fn purchase_item(
     )
     .await?;
 
-    sqlx::query(
+    let insert_result = sqlx::query(
         r#"
         INSERT INTO user_flare (user_id, flare_item_id, is_equipped)
         VALUES ($1, $2, FALSE)
@@ -114,7 +115,14 @@ pub async fn purchase_item(
     .bind(auth_user.user_id)
     .bind(payload.item_id)
     .execute(&mut *tx)
-    .await?;
+    .await;
+
+    if let Err(sqlx::Error::Database(ref db_err)) = insert_result {
+        if db_err.code().as_deref() == Some("23505") {
+            return Err(AppError::Conflict("flare item already owned".to_owned()));
+        }
+    }
+    insert_result?;
 
     ledger::commit(tx).await?;
 

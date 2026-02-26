@@ -32,9 +32,17 @@
 
   let socket: ChatSocket | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
+  let pollAbort: AbortController | null = null;
+  let destroyed = false;
 
   let keepPromptOpen = $state(false);
   let connectionError = $state('');
+
+  // Typing indicator debounce/throttle state
+  let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+  let lastTypingSentAt = 0;
+  const TYPING_THROTTLE_MS = 500;
+  const TYPING_STOP_DELAY_MS = 2000;
 
   onMount(async () => {
     await Promise.all([loadCategories(), loadLanguages()]);
@@ -42,8 +50,13 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
     socket?.close();
-    if (statusTimer) clearInterval(statusTimer);
+    clearInterval(statusTimer ?? undefined);
+    statusTimer = null;
+    pollAbort?.abort();
+    pollAbort = null;
+    if (typingTimeout) clearTimeout(typingTimeout);
   });
 
   async function loadCategories() {
@@ -122,9 +135,17 @@
   }
 
   async function startQueuePolling() {
-    if (statusTimer) clearInterval(statusTimer);
+    clearInterval(statusTimer ?? undefined);
+    statusTimer = null;
+    pollAbort?.abort();
+    pollAbort = null;
+    if (destroyed) return;
+
+    pollAbort = new AbortController();
 
     statusTimer = setInterval(async () => {
+      if (destroyed) return;
+
       const state = get(auth);
       if (!state.token) return;
 
@@ -133,7 +154,9 @@
           | { state: 'idle' }
           | { state: 'queued'; position: number; estimated_wait_seconds: number; queue: string }
           | { state: 'matched'; chat_id: string }
-        >('/api/matchmaking/status');
+        >('/api/matchmaking/status', { signal: pollAbort?.signal });
+
+        if (destroyed) return;
 
         if (status.state === 'queued') {
           setQueue(status.position, status.estimated_wait_seconds);
@@ -145,18 +168,17 @@
           toast.success('Matched');
         }
       } catch {
-        // Keep polling quiet on transient errors.
+        // Keep polling quiet on transient errors and aborted requests.
       }
     }, 1500);
   }
 
   function connectToChat(chatId: string) {
-    const token = get(auth).token;
-    if (!token) return;
+    if (!get(auth).token) return;
 
     socket?.close();
     connectionError = '';
-    socket = connectChatSocket(chatId, token, {
+    socket = connectChatSocket(chatId, () => get(auth).token, {
       onEvent(event) {
         switch (event.type) {
           case 'queued':
@@ -232,7 +254,31 @@
   }
 
   function sendTyping(detail: { isTyping: boolean }) {
-    socket?.send({ type: 'typing', is_typing: detail.isTyping });
+    // Clear any pending stop-typing timeout
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+      typingTimeout = null;
+    }
+
+    if (detail.isTyping) {
+      const now = Date.now();
+      // Throttle: only send isTyping:true at most once per 500ms
+      if (now - lastTypingSentAt >= TYPING_THROTTLE_MS) {
+        socket?.send({ type: 'typing', is_typing: true });
+        lastTypingSentAt = now;
+      }
+
+      // Schedule stop-typing after 2s of no input
+      typingTimeout = setTimeout(() => {
+        socket?.send({ type: 'typing', is_typing: false });
+        lastTypingSentAt = 0;
+        typingTimeout = null;
+      }, TYPING_STOP_DELAY_MS);
+    } else {
+      // Explicitly stopped typing (e.g. sent message or cleared input)
+      socket?.send({ type: 'typing', is_typing: false });
+      lastTypingSentAt = 0;
+    }
   }
 
   function keepVote(detail: { keep: boolean }) {
@@ -296,6 +342,11 @@
   }
 
   function leaveChat() {
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+      typingTimeout = null;
+    }
+    lastTypingSentAt = 0;
     socket?.send({ type: 'leave' });
     socket?.close();
     socket = null;

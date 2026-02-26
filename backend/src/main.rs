@@ -43,6 +43,12 @@ impl FromRef<AppState> for JwtSettings {
     }
 }
 
+impl FromRef<AppState> for redis::Client {
+    fn from_ref(state: &AppState) -> Self {
+        state.redis.clone()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -66,17 +72,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chat_hub: chat::websocket::ChatHub::new(),
     };
 
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+
     matchmaking::matcher::spawn_matcher(state.clone());
+    payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
-    let cors = if config.cors_origin == "*" {
-        CorsLayer::very_permissive()
-    } else {
-        let origin = config
+    if config.cors_origin.trim() == "*" {
+        panic!(
+            "CORS_ORIGIN is set to \"*\" (wildcard). \
+             This allows any website to make authenticated requests to the API. \
+             Set CORS_ORIGIN to a specific origin, e.g. \"http://localhost:5173\" \
+             or \"https://your-domain.com\". Multiple origins can be comma-separated."
+        );
+    }
+
+    let cors = {
+        let origins: Vec<axum::http::HeaderValue> = config
             .cors_origin
-            .parse::<axum::http::HeaderValue>()
-            .expect("invalid CORS_ORIGIN header value");
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|o| {
+                o.parse::<axum::http::HeaderValue>()
+                    .unwrap_or_else(|_| panic!("invalid CORS_ORIGIN value: {o:?}"))
+            })
+            .collect();
 
-        CorsLayer::new().allow_origin(origin)
+        if origins.is_empty() {
+            panic!("CORS_ORIGIN must contain at least one origin");
+        }
+
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
     };
 
     let api = Router::new()
@@ -120,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .nest_service(
             "/assets/emotes",
-            ServeDir::new(state.config.emote_upload_dir.as_str()),
+            ServeDir::new(state.config.emote_upload_dir.as_str())
+                .append_index_html_on_directories(false),
         )
         .merge(api)
         .layer(cors)
@@ -131,7 +161,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("backend listening on {addr}");
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        info!("shutdown signal received, stopping background jobs…");
+        shutdown_token.cancel();
+    })
+    .await?;
 
     Ok(())
 }

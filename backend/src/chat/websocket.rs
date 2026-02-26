@@ -49,9 +49,41 @@ impl ChatHub {
             .clone()
     }
 
+    async fn receiver_for(&self, chat_id: Uuid) -> broadcast::Receiver<ServerEvent> {
+        let mut channels = self.channels.write().await;
+        channels
+            .entry(chat_id)
+            .or_insert_with(|| {
+                let (sender, _) = broadcast::channel(256);
+                sender
+            })
+            .subscribe()
+    }
+
     pub async fn send(&self, chat_id: Uuid, event: ServerEvent) {
         let sender = self.sender_for(chat_id).await;
         let _ = sender.send(event);
+    }
+
+    async fn prune_if_no_receivers(&self, chat_id: Uuid) -> bool {
+        let mut channels = self.channels.write().await;
+        let should_remove = channels
+            .get(&chat_id)
+            .map(|sender| sender.receiver_count() == 0)
+            .unwrap_or(false);
+
+        if should_remove {
+            channels.remove(&chat_id);
+            return true;
+        }
+
+        false
+    }
+
+    #[cfg(test)]
+    async fn channel_exists(&self, chat_id: Uuid) -> bool {
+        let channels = self.channels.read().await;
+        channels.contains_key(&chat_id)
     }
 }
 
@@ -168,9 +200,7 @@ pub async fn ws_handler(
         None
     };
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_socket(socket, state, pre_user_id, params.chat_id)
-    }))
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state, pre_user_id, params.chat_id)))
 }
 
 async fn handle_socket(
@@ -179,36 +209,28 @@ async fn handle_socket(
     pre_user_id: Option<Uuid>,
     initial_chat_id: Option<Uuid>,
 ) {
-    let (user_id, mut current_chat_id) = match authenticate_socket(
-        &mut socket,
-        &state,
-        pre_user_id,
-        initial_chat_id,
-    )
-    .await
-    {
-        Ok(data) => data,
-        Err(err) => {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::to_string(&AuthResponse::Failed {
-                        code: "UNAUTHORIZED".to_owned(),
-                        message: err.to_string(),
-                    })
-                    .unwrap()
-                    .into(),
-                ))
-                .await;
-            let _ = socket.close().await;
-            return;
-        }
-    };
+    let (user_id, mut current_chat_id) =
+        match authenticate_socket(&mut socket, &state, pre_user_id, initial_chat_id).await {
+            Ok(data) => data,
+            Err(err) => {
+                let _ = socket
+                    .send(Message::Text(
+                        serde_json::to_string(&AuthResponse::Failed {
+                            code: "UNAUTHORIZED".to_owned(),
+                            message: err.to_string(),
+                        })
+                        .unwrap()
+                        .into(),
+                    ))
+                    .await;
+                let _ = socket.close().await;
+                return;
+            }
+        };
 
     let _ = socket
         .send(Message::Text(
-            serde_json::to_string(&AuthResponse::Ok)
-                .unwrap()
-                .into(),
+            serde_json::to_string(&AuthResponse::Ok).unwrap().into(),
         ))
         .await;
 
@@ -264,7 +286,7 @@ async fn handle_socket(
                         if current_chat_id != Some(chat_id) {
                             current_chat_id = Some(chat_id);
                             if let Some(task) = chat_forward_task.take() {
-                                task.abort();
+                                abort_and_wait(task).await;
                             }
                             chat_forward_task = Some(spawn_chat_forwarder(&state, chat_id, outbound_tx.clone()).await);
 
@@ -346,7 +368,7 @@ async fn handle_socket(
 
     writer_task.abort();
     if let Some(task) = chat_forward_task {
-        task.abort();
+        abort_and_wait(task).await;
     }
 
     if let Some(chat_id) = current_chat_id {
@@ -384,7 +406,9 @@ async fn authenticate_socket(
         ));
     };
 
-    if let Ok(ClientEvent::Auth { token, chat_id }) = serde_json::from_str::<ClientEvent>(payload.as_str()) {
+    if let Ok(ClientEvent::Auth { token, chat_id }) =
+        serde_json::from_str::<ClientEvent>(payload.as_str())
+    {
         let claims = verify_token(token.as_str(), &state.jwt)?;
         let user_id = Uuid::parse_str(claims.sub.as_str())
             .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
@@ -412,13 +436,17 @@ async fn spawn_chat_forwarder(
     chat_id: Uuid,
     outbound_tx: mpsc::UnboundedSender<ServerEvent>,
 ) -> JoinHandle<()> {
-    let sender = state.chat_hub.sender_for(chat_id).await;
+    let mut broadcast_rx = state.chat_hub.receiver_for(chat_id).await;
     tokio::spawn(async move {
-        let mut broadcast_rx = sender.subscribe();
         while let Ok(event) = broadcast_rx.recv().await {
             let _ = outbound_tx.send(event);
         }
     })
+}
+
+async fn abort_and_wait(task: JoinHandle<()>) {
+    task.abort();
+    let _ = task.await;
 }
 
 async fn process_chat_event(
@@ -434,15 +462,45 @@ async fn process_chat_event(
                 return Ok(false);
             }
 
+            // Safety scan is fail-closed: if scan_message returns Err, the `?`
+            // propagates it and the message is never stored or broadcast.
             let safety = safety::scan_message(state, chat_id, user_id, trimmed).await?;
-            let (content_encrypted, nonce) =
-                encryption::encrypt_for_chat(
-                    &state.db,
-                    chat_id,
-                    trimmed,
-                    &state.config.chat_key_encryption_key,
-                )
-                .await?;
+
+            // If the safety scan determined the message should be rejected
+            // (e.g. blocklist keyword match), refuse to store or broadcast it.
+            if safety.rejected {
+                return Err(AppError::Forbidden(
+                    "message rejected by safety filter".to_owned(),
+                ));
+            }
+
+            // Use the normalized content from the safety scan for storage and
+            // broadcast. This ensures the exact content that was scanned is
+            // what gets stored -- no divergence possible.
+            let safe_content = &safety.normalized_content;
+
+            // Skip empty messages that became empty after normalization
+            // (e.g. messages consisting entirely of zero-width characters).
+            if safe_content.is_empty() {
+                return Ok(false);
+            }
+
+            // Verify the content we're about to store/broadcast is exactly
+            // what was scanned -- guards against any future code path that
+            // might mutate the content between the scan and here.
+            assert!(
+                safety.verify_content(safe_content),
+                "content integrity check failed: scanned content differs from stored content"
+            );
+
+            let (content_encrypted, nonce) = encryption::encrypt_for_chat(
+                &state.db,
+                chat_id,
+                safe_content,
+                &state.config.chat_key_encryption_key,
+                &state.config.legacy_chat_key_encryption_keys,
+            )
+            .await?;
 
             let (message_id, created_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
                 r#"
@@ -470,6 +528,10 @@ async fn process_chat_event(
                 .bind(serde_json::json!(safety.reasons))
                 .execute(&state.db)
                 .await?;
+
+                return Err(AppError::BadRequest(
+                    "message rejected by safety filter".to_owned(),
+                ));
             }
 
             state
@@ -480,9 +542,9 @@ async fn process_chat_event(
                         id: message_id,
                         chat_id,
                         sender_id: user_id,
-                        content: trimmed.to_owned(),
+                        content: safe_content.to_owned(),
                         timestamp: created_at,
-                        flagged: safety.flagged,
+                        flagged: false,
                     },
                 )
                 .await;
@@ -494,40 +556,53 @@ async fn process_chat_event(
                 .await;
         }
         ClientEvent::ReadReceipt { message_id } => {
-            sqlx::query(
+            let result = sqlx::query(
                 r#"
                 UPDATE messages
                 SET is_read = TRUE
                 WHERE id = $1
+                  AND chat_id = $2
+                  AND sender_id != $3
                 "#,
             )
             .bind(message_id)
+            .bind(chat_id)
+            .bind(user_id)
             .execute(&state.db)
             .await?;
 
-            state
-                .chat_hub
-                .send(
-                    chat_id,
-                    ServerEvent::ReadReceipt {
-                        message_id,
-                        reader_id: user_id,
-                    },
-                )
-                .await;
-        }
-        ClientEvent::KeepVote { keep } => {
-            let result = register_keep_vote(state, chat_id, user_id, keep).await?;
-            state
-                .chat_hub
-                .send(chat_id, ServerEvent::PartnerKeepVote)
-                .await;
-
-            if let Some(both_kept) = result {
+            if result.rows_affected() > 0 {
                 state
                     .chat_hub
-                    .send(chat_id, ServerEvent::KeepResult { both_kept })
+                    .send(
+                        chat_id,
+                        ServerEvent::ReadReceipt {
+                            message_id,
+                            reader_id: user_id,
+                        },
+                    )
                     .await;
+            }
+        }
+        ClientEvent::KeepVote { keep } => {
+            match register_keep_vote(state, chat_id, user_id, keep).await? {
+                KeepVoteRegistration::Pending => {
+                    state
+                        .chat_hub
+                        .send(chat_id, ServerEvent::PartnerKeepVote)
+                        .await;
+                }
+                KeepVoteRegistration::Resolved { both_kept } => {
+                    state
+                        .chat_hub
+                        .send(chat_id, ServerEvent::PartnerKeepVote)
+                        .await;
+                    state
+                        .chat_hub
+                        .send(chat_id, ServerEvent::KeepResult { both_kept })
+                        .await;
+                }
+                KeepVoteRegistration::NoopAlreadyResolved => {}
             }
         }
         ClientEvent::Award {
@@ -587,12 +662,39 @@ async fn ensure_chat_member(state: &AppState, chat_id: Uuid, user_id: Uuid) -> A
     Ok(())
 }
 
+enum KeepVoteRegistration {
+    Pending,
+    Resolved { both_kept: bool },
+    NoopAlreadyResolved,
+}
+
 async fn register_keep_vote(
     state: &AppState,
     chat_id: Uuid,
     voter_id: Uuid,
     keep: bool,
-) -> AppResult<Option<bool>> {
+) -> AppResult<KeepVoteRegistration> {
+    let (user_a_id, user_b_id, was_kept, keep_votes_resolved) =
+        sqlx::query_as::<_, (Uuid, Uuid, bool, bool)>(
+            r#"
+        SELECT user_a_id, user_b_id, is_kept, keep_votes_resolved
+        FROM chats
+        WHERE id = $1
+        "#,
+        )
+        .bind(chat_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
+
+    if voter_id != user_a_id && voter_id != user_b_id {
+        return Err(AppError::Forbidden("not a chat participant".to_owned()));
+    }
+
+    if keep_votes_resolved {
+        return Ok(KeepVoteRegistration::NoopAlreadyResolved);
+    }
+
     if keep {
         let row = sqlx::query_as::<_, (bool, i32)>(
             r#"
@@ -614,22 +716,6 @@ async fn register_keep_vote(
         }
     }
 
-    let (user_a_id, user_b_id, was_kept) = sqlx::query_as::<_, (Uuid, Uuid, bool)>(
-        r#"
-        SELECT user_a_id, user_b_id, is_kept
-        FROM chats
-        WHERE id = $1
-        "#,
-    )
-    .bind(chat_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
-
-    if voter_id != user_a_id && voter_id != user_b_id {
-        return Err(AppError::Forbidden("not a chat participant".to_owned()));
-    }
-
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let vote_key = keep_vote_key(chat_id, voter_id);
     let _: () = conn
@@ -641,25 +727,36 @@ async fn register_keep_vote(
 
     let both_voted = a_vote.is_some() && b_vote.is_some();
     if !both_voted {
-        return Ok(None);
+        return Ok(KeepVoteRegistration::Pending);
     }
 
     let keep_a = a_vote.as_deref() == Some("1");
     let keep_b = b_vote.as_deref() == Some("1");
     let both_kept = keep_a && keep_b;
 
-    sqlx::query(
+    let mut tx = state.db.begin().await?;
+    let finalize_result = sqlx::query(
         r#"
         UPDATE chats
-        SET is_kept_by_a = $2, is_kept_by_b = $3
+        SET is_kept_by_a = $2,
+            is_kept_by_b = $3,
+            keep_votes_resolved = TRUE
         WHERE id = $1
+          AND keep_votes_resolved = FALSE
         "#,
     )
     .bind(chat_id)
     .bind(keep_a)
     .bind(keep_b)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+
+    if finalize_result.rows_affected() == 0 {
+        tx.rollback().await?;
+        let _: usize = conn.del(keep_vote_key(chat_id, user_a_id)).await?;
+        let _: usize = conn.del(keep_vote_key(chat_id, user_b_id)).await?;
+        return Ok(KeepVoteRegistration::NoopAlreadyResolved);
+    }
 
     if both_kept && !was_kept {
         sqlx::query(
@@ -670,14 +767,16 @@ async fn register_keep_vote(
             "#,
         )
         .bind(vec![user_a_id, user_b_id])
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
+
+    tx.commit().await?;
 
     let _: usize = conn.del(keep_vote_key(chat_id, user_a_id)).await?;
     let _: usize = conn.del(keep_vote_key(chat_id, user_b_id)).await?;
 
-    Ok(Some(both_kept))
+    Ok(KeepVoteRegistration::Resolved { both_kept })
 }
 
 async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppResult<()> {
@@ -693,6 +792,7 @@ async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppR
     .await?;
 
     let Some((user_a_id, user_b_id)) = participants else {
+        let _ = state.chat_hub.prune_if_no_receivers(chat_id).await;
         return Ok(());
     };
 
@@ -707,25 +807,25 @@ async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppR
     .execute(&state.db)
     .await?;
 
-    if update_result.rows_affected() == 0 {
-        return Ok(());
+    if update_result.rows_affected() > 0 {
+        queue::end_chat_session(state, user_a_id, user_b_id).await?;
+
+        state
+            .chat_hub
+            .send(chat_id, ServerEvent::PartnerLeft { user_id: leaver_id })
+            .await;
+        state
+            .chat_hub
+            .send(
+                chat_id,
+                ServerEvent::Cooldown {
+                    seconds: state.config.cooldown_seconds,
+                },
+            )
+            .await;
     }
 
-    queue::end_chat_session(state, user_a_id, user_b_id).await?;
-
-    state
-        .chat_hub
-        .send(chat_id, ServerEvent::PartnerLeft { user_id: leaver_id })
-        .await;
-    state
-        .chat_hub
-        .send(
-            chat_id,
-            ServerEvent::Cooldown {
-                seconds: state.config.cooldown_seconds,
-            },
-        )
-        .await;
+    let _ = state.chat_hub.prune_if_no_receivers(chat_id).await;
 
     Ok(())
 }
@@ -739,61 +839,46 @@ async fn resolve_partner_payload(
         .await?
         .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
 
-    let partner = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, bool, Option<Vec<String>>, serde_json::Value)>(
         r#"
-        SELECT id, username, bio, is_premium
-        FROM users
-        WHERE id = $1
+        SELECT
+            u.id,
+            u.username,
+            u.bio,
+            u.is_premium,
+            ARRAY(
+                SELECT c.slug
+                FROM user_interests ui
+                JOIN categories c ON c.id = ui.category_id
+                WHERE ui.user_id = u.id
+                ORDER BY c.slug
+            ) AS interest_slugs,
+            COALESCE(
+                (SELECT jsonb_object_agg(fi.item_type, fi.asset_data)
+                 FROM user_flare uf
+                 JOIN flare_items fi ON fi.id = uf.flare_item_id
+                 WHERE uf.user_id = u.id AND uf.is_equipped = TRUE),
+                '{}'::jsonb
+            ) AS flare
+        FROM users u
+        WHERE u.id = $1
         "#,
     )
     .bind(partner_id)
     .fetch_optional(&state.db)
     .await?;
 
-    let interest_slugs = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT c.slug
-        FROM user_interests ui
-        JOIN categories c ON c.id = ui.category_id
-        WHERE ui.user_id = $1
-        ORDER BY c.slug
-        "#,
-    )
-    .bind(partner_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let flare = sqlx::query_as::<_, (String, serde_json::Value)>(
-        r#"
-        SELECT fi.item_type, fi.asset_data
-        FROM user_flare uf
-        JOIN flare_items fi ON fi.id = uf.flare_item_id
-        WHERE uf.user_id = $1
-          AND uf.is_equipped = TRUE
-        "#,
-    )
-    .bind(partner_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let flare_map = flare.into_iter().fold(
-        serde_json::Map::new(),
-        |mut acc, (item_type, asset_data)| {
-            acc.insert(item_type, asset_data);
-            acc
-        },
-    );
-
-    if let Some((id, username, bio, is_premium)) = partner {
+    if let Some((id, username, bio, is_premium, interest_slugs, flare)) = row {
         let badges = if is_premium { vec!["premium"] } else { vec![] };
+        let interests = interest_slugs.unwrap_or_default();
 
         return Ok(serde_json::json!({
             "id": id,
             "username": username,
             "bio": bio,
             "badges": badges,
-            "interests": interest_slugs,
-            "flare": flare_map
+            "interests": interests,
+            "flare": flare
         }));
     }
 
@@ -810,9 +895,7 @@ async fn resolve_partner_payload(
 async fn set_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let ttl = state.config.queue_session_ttl_seconds;
-    let _: () = conn
-        .set_ex(format!("session:{user_id}"), "1", ttl)
-        .await?;
+    let _: () = conn.set_ex(format!("session:{user_id}"), "1", ttl).await?;
     Ok(())
 }
 
@@ -824,4 +907,56 @@ async fn clear_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()
 
 fn keep_vote_key(chat_id: Uuid, user_id: Uuid) -> String {
     format!("keep_vote:{chat_id}:{user_id}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn prune_removes_channel_when_no_receivers() {
+        let hub = ChatHub::new();
+        let chat_id = Uuid::new_v4();
+
+        let _ = hub.sender_for(chat_id).await;
+        assert!(hub.channel_exists(chat_id).await);
+
+        assert!(hub.prune_if_no_receivers(chat_id).await);
+        assert!(!hub.channel_exists(chat_id).await);
+    }
+
+    #[tokio::test]
+    async fn prune_keeps_channel_with_active_receivers() {
+        let hub = ChatHub::new();
+        let chat_id = Uuid::new_v4();
+
+        let receiver = hub.receiver_for(chat_id).await;
+        assert!(hub.channel_exists(chat_id).await);
+
+        assert!(!hub.prune_if_no_receivers(chat_id).await);
+        assert!(hub.channel_exists(chat_id).await);
+
+        drop(receiver);
+
+        assert!(hub.prune_if_no_receivers(chat_id).await);
+        assert!(!hub.channel_exists(chat_id).await);
+    }
+
+    #[tokio::test]
+    async fn prune_succeeds_after_aborted_receiver_task_finishes() {
+        let hub = ChatHub::new();
+        let chat_id = Uuid::new_v4();
+
+        let mut receiver = hub.receiver_for(chat_id).await;
+        let task = tokio::spawn(async move {
+            let _ = receiver.recv().await;
+        });
+
+        assert!(!hub.prune_if_no_receivers(chat_id).await);
+
+        abort_and_wait(task).await;
+
+        assert!(hub.prune_if_no_receivers(chat_id).await);
+        assert!(!hub.channel_exists(chat_id).await);
+    }
 }

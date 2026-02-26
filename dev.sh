@@ -153,6 +153,10 @@ ensure_env_files() {
   if [[ ! -f "$BACKEND_DIR/.env" ]]; then
     log "Creating backend/.env from backend/.env.example"
     cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
+    local secret
+    secret="$(openssl rand -base64 48)"
+    sed -i "s/^JWT_SECRET=$/JWT_SECRET=${secret}/" "$BACKEND_DIR/.env"
+    log "Generated random JWT_SECRET for local dev."
   fi
 
   if [[ ! -f "$FRONTEND_DIR/.env" ]]; then

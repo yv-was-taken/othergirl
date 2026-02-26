@@ -1,18 +1,8 @@
-import { browser } from '$app/environment';
-
 const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
-let authToken: string | null = browser ? localStorage.getItem('othergirl.token') : null;
+let authToken: string | null = null;
 
 export function setAuthToken(token: string | null) {
   authToken = token;
-
-  if (!browser) return;
-
-  if (token) {
-    localStorage.setItem('othergirl.token', token);
-  } else {
-    localStorage.removeItem('othergirl.token');
-  }
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -38,12 +28,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     const fallback = `Request failed (${response.status})`;
     const text = await response.text();
 
+    let errorMessage = fallback;
     try {
       const parsed = JSON.parse(text) as { error?: string };
-      throw new Error(parsed.error ?? fallback);
+      errorMessage = parsed.error ?? fallback;
     } catch {
-      throw new Error(text || fallback);
+      errorMessage = text || fallback;
     }
+    throw new Error(errorMessage);
   }
 
   if (response.status === 204) {

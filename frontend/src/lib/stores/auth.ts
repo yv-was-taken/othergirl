@@ -22,6 +22,11 @@ const initial = readInitialState();
 
 export const auth = writable<AuthState>(initial);
 
+// Clean up legacy standalone token key
+if (browser) {
+  localStorage.removeItem('othergirl.token');
+}
+
 auth.subscribe((state) => {
   setAuthToken(state.token);
 

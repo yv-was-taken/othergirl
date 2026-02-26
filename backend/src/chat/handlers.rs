@@ -24,6 +24,13 @@ pub struct Pagination {
     pub per_page: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Validate)]
+pub struct ChatQuery {
+    #[validate(range(min = 1, max = 100))]
+    pub limit: Option<i64>,
+    pub before: Option<Uuid>,
+}
+
 pub async fn list_chats(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -101,7 +108,12 @@ pub async fn get_chat(
     State(state): State<AppState>,
     auth_user: AuthUser,
     Path(chat_id): Path<Uuid>,
+    Query(query): Query<ChatQuery>,
 ) -> AppResult<Json<ChatDetails>> {
+    query.validate()?;
+
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+
     let chat = sqlx::query_as::<
         _,
         (
@@ -128,29 +140,67 @@ pub async fn get_chat(
         ));
     }
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Uuid,
-            Uuid,
-            Option<Vec<u8>>,
-            Option<Vec<u8>>,
-            Option<String>,
-            bool,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        r#"
-        SELECT id, chat_id, sender_id, content_encrypted, nonce, content_text, is_read, created_at
-        FROM messages
-        WHERE chat_id = $1
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(chat_id)
-    .fetch_all(&state.db)
-    .await?;
+    let rows = if let Some(before_id) = query.before {
+        sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                Uuid,
+                Option<Vec<u8>>,
+                Option<Vec<u8>>,
+                Option<String>,
+                bool,
+                chrono::DateTime<chrono::Utc>,
+            ),
+        >(
+            r#"
+            SELECT * FROM (
+                SELECT id, chat_id, sender_id, content_encrypted, nonce, content_text, is_read, created_at
+                FROM messages
+                WHERE chat_id = $1
+                  AND created_at < (SELECT created_at FROM messages WHERE id = $3)
+                ORDER BY created_at DESC
+                LIMIT $2
+            ) sub
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(chat_id)
+        .bind(limit)
+        .bind(before_id)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                Uuid,
+                Option<Vec<u8>>,
+                Option<Vec<u8>>,
+                Option<String>,
+                bool,
+                chrono::DateTime<chrono::Utc>,
+            ),
+        >(
+            r#"
+            SELECT * FROM (
+                SELECT id, chat_id, sender_id, content_encrypted, nonce, content_text, is_read, created_at
+                FROM messages
+                WHERE chat_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+            ) sub
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(chat_id)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let mut messages = Vec::with_capacity(rows.len());
     for (id, row_chat_id, sender_id, content_encrypted, nonce, content_text, is_read, created_at) in
@@ -163,6 +213,7 @@ pub async fn get_chat(
             nonce,
             content_text,
             &state.config.chat_key_encryption_key,
+            &state.config.legacy_chat_key_encryption_keys,
         )
         .await?;
 

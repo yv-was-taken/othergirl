@@ -14,6 +14,9 @@ use crate::{
     AppState,
 };
 
+/// Maximum allowed emote file size: 2 MB.
+const MAX_EMOTE_SIZE: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, serde::Deserialize)]
 pub struct PurchaseEmoteRequest {
     pub emote_id: Uuid,
@@ -141,7 +144,11 @@ pub async fn upload_emote(
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut file_ext = "png".to_owned();
 
-    while let Some(field) = multipart.next_field().await.map_err(|_| AppError::BadRequest("invalid multipart payload".to_owned()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| AppError::BadRequest("invalid multipart payload".to_owned()))?
+    {
         let field_name = field.name().unwrap_or_default().to_owned();
         match field_name.as_str() {
             "token" => {
@@ -165,12 +172,14 @@ pub async fn upload_emote(
                     .text()
                     .await
                     .map_err(|_| AppError::BadRequest("invalid price field".to_owned()))?;
-                price_sparks = i64::from_str(raw.trim())
-                    .map_err(|_| AppError::BadRequest("price_sparks must be an integer".to_owned()))?;
+                price_sparks = i64::from_str(raw.trim()).map_err(|_| {
+                    AppError::BadRequest("price_sparks must be an integer".to_owned())
+                })?;
             }
             "file" => {
                 if let Some(filename) = field.file_name() {
-                    if let Some(ext) = Path::new(filename).extension().and_then(|ext| ext.to_str()) {
+                    if let Some(ext) = Path::new(filename).extension().and_then(|ext| ext.to_str())
+                    {
                         file_ext = ext.to_ascii_lowercase();
                     }
                 }
@@ -191,22 +200,33 @@ pub async fn upload_emote(
     let file_bytes =
         file_bytes.ok_or_else(|| AppError::BadRequest("missing emote image file".to_owned()))?;
 
+    if file_bytes.len() > MAX_EMOTE_SIZE {
+        return Err(AppError::BadRequest(format!(
+            "file too large: {} bytes (max {})",
+            file_bytes.len(),
+            MAX_EMOTE_SIZE
+        )));
+    }
+
     if !is_valid_emote_token(token.as_str()) {
         return Err(AppError::BadRequest(
             "token must look like :my_emote:".to_owned(),
         ));
     }
     if price_sparks < 0 {
-        return Err(AppError::BadRequest(
-            "price_sparks must be >= 0".to_owned(),
-        ));
+        return Err(AppError::BadRequest("price_sparks must be >= 0".to_owned()));
     }
 
     tokio::fs::create_dir_all(state.config.emote_upload_dir.as_str())
         .await
         .map_err(|_| AppError::Internal)?;
 
-    let filename = format!("{}_{}.{}", Uuid::new_v4(), auth_user.user_id, safe_extension(file_ext.as_str()));
+    let filename = format!(
+        "{}_{}.{}",
+        Uuid::new_v4(),
+        auth_user.user_id,
+        safe_extension(file_ext.as_str())
+    );
     let filepath = format!("{}/{}", state.config.emote_upload_dir, filename);
     tokio::fs::write(filepath.as_str(), &file_bytes)
         .await
@@ -259,7 +279,7 @@ fn is_valid_emote_token(token: &str) -> bool {
 
 fn safe_extension(extension: &str) -> &str {
     match extension {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => extension,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => extension,
         _ => "png",
     }
 }
