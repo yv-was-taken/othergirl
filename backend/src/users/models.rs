@@ -21,7 +21,6 @@ pub struct UserProfile {
 pub struct UpdateProfileRequest {
     #[validate(length(max = 500))]
     pub bio: Option<String>,
-    pub is_age_verified: Option<bool>,
     pub interest_category_ids: Option<Vec<Uuid>>,
 }
 
