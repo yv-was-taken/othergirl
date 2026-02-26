@@ -55,7 +55,6 @@ pub async fn update_me(
         UPDATE users
         SET
             bio = COALESCE($2, bio),
-            is_age_verified = COALESCE($3, is_age_verified),
             updated_at = NOW()
         WHERE id = $1
         RETURNING id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at
@@ -63,7 +62,6 @@ pub async fn update_me(
     )
     .bind(auth_user.user_id)
     .bind(payload.bio)
-    .bind(payload.is_age_verified)
     .fetch_one(&mut *tx)
     .await?;
 

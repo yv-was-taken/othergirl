@@ -27,7 +27,6 @@ pub struct RegisterRequest {
     pub email: String,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
-    pub is_age_verified: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -73,19 +72,17 @@ pub async fn register(
     payload.validate()?;
 
     let password_hash = hash_password(&payload.password)?;
-    let is_age_verified = payload.is_age_verified.unwrap_or(false);
 
     let insert = sqlx::query_as::<_, UserAuthRow>(
         r#"
         INSERT INTO users (username, email, password_hash, is_age_verified)
-        VALUES ($1, $2, $3, $4)
+        VALUES ($1, $2, $3, FALSE)
         RETURNING id, username, email, password_hash, is_premium, is_age_verified, is_suspended, created_at
         "#,
     )
     .bind(payload.username)
     .bind(payload.email)
     .bind(password_hash)
-    .bind(is_age_verified)
     .fetch_one(&state.db)
     .await;
 
