@@ -26,6 +26,7 @@ use crate::{
 
 type HmacSha256 = Hmac<Sha256>;
 const TELEGRAM_AUTH_TTL_SECONDS: i64 = 24 * 60 * 60;
+const OAUTH_EXCHANGE_CODE_TTL_SECONDS: u64 = 60;
 
 #[derive(Debug, Deserialize)]
 pub struct OauthCallbackQuery {
@@ -38,6 +39,11 @@ pub struct OauthCallbackQuery {
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub username: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OauthExchangeRequest {
+    pub code: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -116,7 +122,7 @@ pub async fn oauth_callback(
     let token = issue_token(user.id, &state.jwt)?;
 
     let response = AuthResponse {
-        token: token.clone(),
+        token,
         user: SessionUser {
             id: user.id,
             username: user.username.clone(),
@@ -131,15 +137,60 @@ pub async fn oauth_callback(
         return Ok(Json(response).into_response());
     }
 
-    let serialized_user = serde_json::to_string(&response.user).map_err(|_| AppError::Internal)?;
+    let exchange_code = Uuid::new_v4().simple().to_string();
+    let serialized_response = serde_json::to_string(&response).map_err(|_| AppError::Internal)?;
+    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let _: () = conn
+        .set_ex(
+            oauth_exchange_key(exchange_code.as_str()),
+            serialized_response,
+            OAUTH_EXCHANGE_CODE_TTL_SECONDS,
+        )
+        .await?;
+
     let redirect_url = format!(
-        "{}/login?oauth_token={}&oauth_user={}",
+        "{}/login?oauth_code={}",
         state.config.public_web_base_url.trim_end_matches('/'),
-        url_encode(token.as_str()),
-        url_encode(serialized_user.as_str())
+        url_encode(exchange_code.as_str())
     );
 
     Ok(Redirect::temporary(redirect_url.as_str()).into_response())
+}
+
+pub async fn oauth_exchange(
+    State(state): State<AppState>,
+    Json(payload): Json<OauthExchangeRequest>,
+) -> AppResult<Json<AuthResponse>> {
+    let code = payload.code.trim();
+    if code.is_empty() {
+        return Err(AppError::BadRequest(
+            "missing oauth exchange code".to_owned(),
+        ));
+    }
+
+    if code.len() > 128 {
+        return Err(AppError::BadRequest(
+            "oauth exchange code is invalid".to_owned(),
+        ));
+    }
+
+    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let key = oauth_exchange_key(code);
+    let (serialized_response, _): (Option<String>, usize) = redis::pipe()
+        .atomic()
+        .get(key.as_str())
+        .del(key.as_str())
+        .query_async(&mut conn)
+        .await?;
+
+    let serialized_response = serialized_response.ok_or_else(|| {
+        AppError::Unauthorized("oauth exchange code is invalid or expired".to_owned())
+    })?;
+
+    let response = serde_json::from_str::<AuthResponse>(serialized_response.as_str())
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(response))
 }
 
 async fn oauth_identity_from_provider(
@@ -580,6 +631,10 @@ fn validate_provider(provider: &str) -> AppResult<()> {
 
 fn oauth_state_key(state: &str) -> String {
     format!("oauth_state:{state}")
+}
+
+fn oauth_exchange_key(code: &str) -> String {
+    format!("oauth_exchange:{code}")
 }
 
 fn sanitize_username(value: &str) -> String {

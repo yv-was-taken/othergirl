@@ -34,13 +34,13 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AuthResponse {
     pub token: String,
     pub user: SessionUser,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SessionUser {
     pub id: Uuid,
     pub username: String,
