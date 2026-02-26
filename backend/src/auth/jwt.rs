@@ -12,8 +12,8 @@ use crate::error::AppResult;
 pub struct Claims {
     pub sub: String,
     pub jti: String,
-    pub iat: usize,
-    pub exp: usize,
+    pub iat: i64,
+    pub exp: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -38,8 +38,8 @@ pub fn issue_token(user_id: Uuid, settings: &JwtSettings) -> AppResult<String> {
     let claims = Claims {
         sub: user_id.to_string(),
         jti: Uuid::new_v4().to_string(),
-        iat: now.timestamp() as usize,
-        exp: expires.timestamp() as usize,
+        iat: now.timestamp(),
+        exp: expires.timestamp(),
     };
 
     Ok(encode(
@@ -68,7 +68,7 @@ pub async fn revoke_token(
     claims: &Claims,
     redis: &redis::Client,
 ) -> AppResult<()> {
-    let remaining = claims.exp as i64 - Utc::now().timestamp();
+    let remaining = claims.exp - Utc::now().timestamp();
     if remaining <= 0 {
         return Ok(());
     }
