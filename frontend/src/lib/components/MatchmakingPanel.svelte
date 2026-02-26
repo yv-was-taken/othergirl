@@ -31,6 +31,7 @@
       {#if categories.length === 0}
         <option value="">No categories</option>
       {:else}
+        <option value="" disabled>Select a category</option>
         {#each categories as category}
           <option value={category.id}>{category.name}</option>
         {/each}
@@ -44,6 +45,7 @@
       {#if languages.length === 0}
         <option value="">No languages</option>
       {:else}
+        <option value="" disabled>Select a language</option>
         {#each languages as language}
           <option value={language.id}>{language.name}</option>
         {/each}
