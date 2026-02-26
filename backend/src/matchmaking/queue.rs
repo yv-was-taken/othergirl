@@ -514,7 +514,7 @@ async fn queue_score(state: &AppState, user_id: Uuid) -> AppResult<f64> {
     .unwrap_or(false);
 
     let now = Utc::now().timestamp_millis() as f64;
-    let premium_boost = if is_premium { 1_000.0 } else { 0.0 };
+    let premium_boost = if is_premium { 60_000.0 } else { 0.0 };
     Ok(now - premium_boost)
 }
 
