@@ -25,10 +25,22 @@ pub struct SubscribeRequest {
     pub cancel_url: Option<String>,
 }
 
+struct SparkBundle {
+    sparks: i64,
+    price_cents: i64,
+}
+
+/// Server-defined spark bundles. Clients select a bundle by index;
+/// the server looks up the price -- never trust the client for pricing.
+const SPARK_BUNDLES: &[SparkBundle] = &[
+    SparkBundle { sparks: 100, price_cents: 499 },
+    SparkBundle { sparks: 500, price_cents: 1999 },
+    SparkBundle { sparks: 1200, price_cents: 3999 },
+];
+
 #[derive(Debug, Deserialize, Validate)]
 pub struct BuySparksRequest {
-    #[validate(range(min = 1))]
-    pub amount: i64,
+    pub bundle_index: usize,
     pub success_url: Option<String>,
     pub cancel_url: Option<String>,
 }
@@ -161,12 +173,36 @@ pub async fn subscribe(
     })))
 }
 
+pub async fn spark_bundles() -> Json<serde_json::Value> {
+    let bundles: Vec<serde_json::Value> = SPARK_BUNDLES
+        .iter()
+        .enumerate()
+        .map(|(i, bundle)| {
+            let sparks = bundle.sparks;
+            let price_cents = bundle.price_cents;
+            serde_json::json!({
+                "index": i,
+                "sparks": sparks,
+                "price_cents": price_cents,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({ "bundles": bundles }))
+}
+
 pub async fn buy_sparks(
     State(state): State<AppState>,
     auth_user: AuthUser,
     Json(payload): Json<BuySparksRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    payload.validate()?;
+    let bundle = SPARK_BUNDLES.get(payload.bundle_index).ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "invalid bundle_index: {}. Must be 0..{}",
+            payload.bundle_index,
+            SPARK_BUNDLES.len()
+        ))
+    })?;
 
     let stripe_secret = stripe_secret(&state)?;
     let success_url = payload
@@ -184,11 +220,11 @@ pub async fn buy_sparks(
         ),
         (
             "line_items[0][price_data][product_data][name]".to_owned(),
-            format!("Sparks bundle ({})", payload.amount),
+            format!("{} Sparks", bundle.sparks),
         ),
         (
             "line_items[0][price_data][unit_amount]".to_owned(),
-            payload.amount.to_string(),
+            bundle.price_cents.to_string(),
         ),
         ("line_items[0][quantity]".to_owned(), "1".to_owned()),
         ("success_url".to_owned(), success_url.clone()),
@@ -204,7 +240,7 @@ pub async fn buy_sparks(
         ("metadata[purchase_type]".to_owned(), "sparks".to_owned()),
         (
             "metadata[sparks_amount]".to_owned(),
-            payload.amount.to_string(),
+            bundle.sparks.to_string(),
         ),
     ];
 
@@ -231,7 +267,8 @@ pub async fn buy_sparks(
         "checkout_url": checkout_url,
         "session_id": session.id,
         "mode": "payment",
-        "amount": payload.amount
+        "sparks": bundle.sparks,
+        "price_cents": bundle.price_cents
     })))
 }
 
