@@ -279,6 +279,17 @@ pub async fn active_chat_for(
     Ok(value.and_then(|raw| Uuid::parse_str(raw.as_str()).ok()))
 }
 
+pub async fn refresh_active_chat_ttl(state: &AppState, user_id: Uuid) -> AppResult<()> {
+    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let ttl = state.config.queue_session_ttl_seconds;
+    let key = active_chat_key(user_id);
+    let exists: bool = conn.exists(&key).await?;
+    if exists {
+        let _: () = conn.expire(key, ttl as i64).await?;
+    }
+    Ok(())
+}
+
 pub async fn set_match_notification(
     state: &AppState,
     conn: &mut redis::aio::MultiplexedConnection,

@@ -269,6 +269,12 @@ async fn handle_socket(
                     error!(?err, "failed to refresh websocket session presence");
                 }
 
+                if current_chat_id.is_some() {
+                    if let Err(err) = queue::refresh_active_chat_ttl(&state, user_id).await {
+                        error!(?err, "failed to refresh active chat TTL");
+                    }
+                }
+
                 if current_chat_id.is_none() {
                     if let Ok(Some(match_notice)) = queue::take_match_notification(&state, user_id).await {
                         current_chat_id = Some(match_notice.chat_id);
