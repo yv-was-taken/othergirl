@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub server_addr: String,
     pub database_url: String,
     pub redis_url: String,
+    pub trusted_proxy_hops: usize,
     pub jwt_secret: String,
     pub jwt_ttl_minutes: i64,
     pub cors_origin: String,
@@ -44,10 +45,10 @@ impl AppConfig {
 
         let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-now".to_owned());
         let chat_key_encryption_key = chat_key_encryption_key_from_env(&jwt_secret);
-        let public_api_base_url = env::var("PUBLIC_API_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_owned());
-        let public_web_base_url = env::var("PUBLIC_WEB_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:3000".to_owned());
+        let public_api_base_url =
+            env::var("PUBLIC_API_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_owned());
+        let public_web_base_url =
+            env::var("PUBLIC_WEB_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_owned());
 
         Self {
             server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_owned()),
@@ -56,6 +57,7 @@ impl AppConfig {
             }),
             redis_url: env::var("REDIS_URL")
                 .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned()),
+            trusted_proxy_hops: env_usize("TRUSTED_PROXY_HOPS", 0),
             jwt_secret,
             jwt_ttl_minutes: env::var("JWT_TTL_MINUTES")
                 .ok()
@@ -104,6 +106,13 @@ fn env_u64(key: &str, default: u64) -> u64 {
     env::var(key)
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(default)
 }
 

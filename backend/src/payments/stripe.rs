@@ -138,9 +138,8 @@ pub fn verify_webhook_signature(
         }
     }
 
-    let timestamp = timestamp.ok_or_else(|| {
-        AppError::Unauthorized("missing webhook signature timestamp".to_owned())
-    })?;
+    let timestamp = timestamp
+        .ok_or_else(|| AppError::Unauthorized("missing webhook signature timestamp".to_owned()))?;
 
     let now = Utc::now().timestamp();
     if (now - timestamp).abs() > WEBHOOK_TOLERANCE_SECONDS {
@@ -150,15 +149,13 @@ pub fn verify_webhook_signature(
     }
 
     let signed_payload = format!("{timestamp}.{}", String::from_utf8_lossy(payload));
-    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).map_err(|_| {
-        AppError::Unauthorized("invalid webhook signing configuration".to_owned())
-    })?;
+    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
+        .map_err(|_| AppError::Unauthorized("invalid webhook signing configuration".to_owned()))?;
     mac.update(signed_payload.as_bytes());
 
     for signature in signatures {
-        let decoded = decode_hex(signature.as_str()).map_err(|_| {
-            AppError::Unauthorized("invalid webhook signature encoding".to_owned())
-        })?;
+        let decoded = decode_hex(signature.as_str())
+            .map_err(|_| AppError::Unauthorized("invalid webhook signature encoding".to_owned()))?;
         if mac.clone().verify_slice(decoded.as_slice()).is_ok() {
             return Ok(());
         }
@@ -222,7 +219,12 @@ fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
     let message = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|value| value.get("error").cloned())
-        .and_then(|error| error.get("message").and_then(|v| v.as_str()).map(str::to_owned))
+        .and_then(|error| {
+            error
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| "stripe request failed".to_owned());
 
     if status == StatusCode::UNAUTHORIZED {
