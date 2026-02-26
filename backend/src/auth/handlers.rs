@@ -93,7 +93,7 @@ pub async fn register(
         Ok(row) => row,
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
             return Err(AppError::Conflict(
-                "email or username already exists".to_owned(),
+                "registration failed".to_owned(),
             ))
         }
         Err(err) => return Err(err.into()),
