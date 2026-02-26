@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use rand::seq::SliceRandom;
 use redis::AsyncCommands;
 use tokio::time::interval;
 use tracing::{debug, error};
@@ -40,11 +41,17 @@ async fn try_match_queue(
     queue_key: &str,
 ) -> Result<(), crate::error::AppError> {
     loop {
-        let users = queue::queued_users(conn, queue_key, 50).await?;
+        let mut users = queue::queued_users(conn, queue_key, 50).await?;
         if users.len() < 2 {
             return Ok(());
         }
 
+        // Shuffle so every user gets a fair chance at matching,
+        // not just those at the front of the sorted set.
+        users.shuffle(&mut rand::rng());
+
+        const MAX_PAIR_CHECKS: usize = 50;
+        let mut pairs_checked: usize = 0;
         let mut chosen_pair: Option<(Uuid, Uuid)> = None;
 
         'outer: for (left_idx, left_user) in users.iter().enumerate() {
@@ -59,6 +66,11 @@ async fn try_match_queue(
             }
 
             for right_user in users.iter().skip(left_idx + 1) {
+                if pairs_checked >= MAX_PAIR_CHECKS {
+                    break 'outer;
+                }
+                pairs_checked += 1;
+
                 if queue::active_chat_for(conn, *right_user).await?.is_some() {
                     queue::remove_from_all_queues(conn, *right_user).await?;
                     continue;
