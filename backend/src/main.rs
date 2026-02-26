@@ -149,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .nest_service(
             "/assets/emotes",
-            ServeDir::new(state.config.emote_upload_dir.as_str()),
+            ServeDir::new(state.config.emote_upload_dir.as_str())
+                .append_index_html_on_directories(false),
         )
         .merge(api)
         .layer(cors)
