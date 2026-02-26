@@ -69,7 +69,8 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse::<i64>().ok())
                 .unwrap_or(60),
-            cors_origin: env::var("CORS_ORIGIN").unwrap_or_else(|_| "*".to_owned()),
+            cors_origin: env::var("CORS_ORIGIN")
+                .unwrap_or_else(|_| "http://localhost:5173".to_owned()),
             public_api_base_url: public_api_base_url.clone(),
             public_web_base_url: public_web_base_url.clone(),
             stripe_secret_key: optional_env("STRIPE_SECRET_KEY"),
