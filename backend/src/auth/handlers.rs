@@ -161,6 +161,18 @@ pub async fn refresh(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
+    let is_suspended: bool = sqlx::query_scalar(
+        "SELECT is_suspended FROM users WHERE id = $1",
+    )
+    .bind(auth_user.user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("user not found".to_owned()))?;
+
+    if is_suspended {
+        return Err(AppError::Forbidden("account suspended".to_owned()));
+    }
+
     let token = issue_token(auth_user.user_id, &state.jwt)?;
 
     Ok(Json(serde_json::json!({ "token": token })))
