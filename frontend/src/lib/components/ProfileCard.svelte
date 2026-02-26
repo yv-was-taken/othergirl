@@ -18,14 +18,14 @@
   <h3 class="text-lg font-semibold">{username}</h3>
   <p class="text-sm text-[var(--text-secondary)]">{bio || 'No bio yet.'}</p>
   <div class="flex flex-wrap gap-2">
-    {#each badges as badge}
+    {#each badges as badge (badge)}
       <span class="rounded-full bg-[var(--bg-elevated)] px-2 py-1 text-xs text-[var(--text-secondary)]">{badge}</span>
     {/each}
   </div>
 
   {#if interests.length > 0}
     <div class="flex flex-wrap gap-2">
-      {#each interests as interest}
+      {#each interests as interest (interest)}
         <span class="rounded-full bg-[var(--bg-elevated)] px-2 py-1 text-xs text-[var(--text-secondary)]">{interest}</span>
       {/each}
     </div>
