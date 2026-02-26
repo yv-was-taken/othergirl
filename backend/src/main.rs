@@ -17,7 +17,7 @@ mod users;
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::FromRef,
+    extract::{FromRef, State},
     middleware,
     routing::{get, post},
     Json, Router,
@@ -195,10 +195,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn health() -> Json<serde_json::Value> {
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
+    let redis_ok = {
+        let mut conn = state.redis.get_multiplexed_tokio_connection().await;
+        match conn {
+            Ok(ref mut c) => redis::cmd("PING").query_async::<_, String>(c).await.is_ok(),
+            Err(_) => false,
+        }
+    };
+    let status = if db_ok && redis_ok { "ok" } else { "unhealthy" };
     Json(serde_json::json!({
-        "status": "ok",
-        "service": "othergirl-backend",
-        "time": chrono::Utc::now().to_rfc3339(),
+        "status": status,
+        "db": db_ok,
+        "redis": redis_ok,
     }))
 }
