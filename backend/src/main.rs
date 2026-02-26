@@ -24,7 +24,7 @@ use axum::{
 };
 use sqlx::PgPool;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{auth::jwt::JwtSettings, config::AppConfig};
 
@@ -80,8 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
-    matchmaking::matcher::spawn_matcher(state.clone());
-    payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
+    let matcher_handle = matchmaking::matcher::spawn_matcher(state.clone(), shutdown_token.clone());
+    let reconciler_handle = payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
     if config.cors_origin.trim() == "*" {
         panic!(
@@ -177,6 +177,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_token.cancel();
     })
     .await?;
+
+    info!("HTTP server stopped, waiting for background tasks to finish…");
+    let drain = async {
+        let _ = matcher_handle.await;
+        let _ = reconciler_handle.await;
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(5), drain)
+        .await
+        .is_err()
+    {
+        warn!("background tasks did not finish within 5 s, forcing exit");
+    } else {
+        info!("all background tasks exited cleanly");
+    }
 
     Ok(())
 }

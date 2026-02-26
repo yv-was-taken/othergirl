@@ -19,6 +19,6 @@ pub fn routes() -> Router<AppState> {
         .route("/cashout/status", get(handlers::cashout_status))
 }
 
-pub fn spawn_background_jobs(state: AppState, cancel: tokio_util::sync::CancellationToken) {
-    handlers::spawn_cashout_reconciler(state, cancel);
+pub fn spawn_background_jobs(state: AppState, cancel: tokio_util::sync::CancellationToken) -> tokio::task::JoinHandle<()> {
+    handlers::spawn_cashout_reconciler(state, cancel)
 }

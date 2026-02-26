@@ -675,7 +675,7 @@ pub async fn cashout_status(
     Ok(Json(serde_json::json!({ "connect": connect })))
 }
 
-pub fn spawn_cashout_reconciler(state: AppState, cancel: tokio_util::sync::CancellationToken) {
+pub fn spawn_cashout_reconciler(state: AppState, cancel: tokio_util::sync::CancellationToken) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let base_interval = std::time::Duration::from_secs(CASHOUT_RECONCILE_INTERVAL_SECS);
         let max_backoff = std::time::Duration::from_secs(CASHOUT_RECONCILE_MAX_BACKOFF_SECS);
@@ -716,7 +716,7 @@ pub fn spawn_cashout_reconciler(state: AppState, cancel: tokio_util::sync::Cance
         }
 
         tracing::info!("cashout reconciler stopped");
-    });
+    })
 }
 
 const CASHOUT_RECONCILER_LOCK_ID: i64 = 0x4F47_CA50; // "OG_CASHOUT" in hex-ish
