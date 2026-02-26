@@ -16,6 +16,7 @@
   let loading = $state(false);
 
   const oauthProviders = ['google', 'discord', 'github', 'telegram'] as const;
+  const OAUTH_NEXT_KEY = 'othergirl.oauth.next';
 
   onMount(async () => {
     const params = new URLSearchParams(window.location.search);
@@ -37,10 +38,12 @@
       };
       setSession(oauthToken, oauthUser);
       toast.success('OAuth login complete');
-      await goto('/chat', { replaceState: true });
+      await goto(getOauthPostAuthRedirectPath(), { replaceState: true });
     } catch {
       toast.error('OAuth callback payload was invalid');
       await goto('/login', { replaceState: true });
+    } finally {
+      clearStoredOauthNextPath();
     }
   });
 
@@ -66,6 +69,7 @@
 
         setSession(response.token, response.user);
         toast.success('Logged in');
+        await goto(getPostAuthRedirectPath(), { replaceState: true });
       } else {
         const response = await apiFetch<{
           token: string;
@@ -84,6 +88,7 @@
 
         setSession(response.token, response.user);
         toast.success('Account created');
+        await goto(getPostAuthRedirectPath(), { replaceState: true });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -96,11 +101,65 @@
   async function oauthLogin(provider: (typeof oauthProviders)[number]) {
     loading = true;
     try {
+      const next = getSafeNextFromQuery();
+      if (next) {
+        localStorage.setItem(OAUTH_NEXT_KEY, next);
+      } else {
+        clearStoredOauthNextPath();
+      }
+
       const start = await apiFetch<{ redirect_url: string }>(`/api/auth/oauth/${provider}`);
       window.location.assign(start.redirect_url);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : `OAuth failed for ${provider}`);
       loading = false;
+    }
+  }
+
+  function getPostAuthRedirectPath() {
+    const next = getSafeNextFromQuery();
+
+    if (!next) {
+      return '/chat';
+    }
+
+    return next;
+  }
+
+  function getOauthPostAuthRedirectPath() {
+    const nextFromQuery = getSafeNextFromQuery();
+    if (nextFromQuery) {
+      return nextFromQuery;
+    }
+
+    const stored = localStorage.getItem(OAUTH_NEXT_KEY);
+    if (isSafeInternalPath(stored)) {
+      return stored;
+    }
+
+    return '/chat';
+  }
+
+  function clearStoredOauthNextPath() {
+    localStorage.removeItem(OAUTH_NEXT_KEY);
+  }
+
+  function getSafeNextFromQuery() {
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get('next');
+    return isSafeInternalPath(next) ? next : null;
+  }
+
+  function isSafeInternalPath(path: string | null): path is string {
+    if (!path || path.includes('\\') || !path.startsWith('/')) {
+      return false;
+    }
+
+    try {
+      const parsed = new URL(path, window.location.origin);
+      return parsed.origin === window.location.origin;
+    } catch {
+      return false;
     }
   }
 </script>
