@@ -839,61 +839,46 @@ async fn resolve_partner_payload(
         .await?
         .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
 
-    let partner = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, bool, Option<Vec<String>>, serde_json::Value)>(
         r#"
-        SELECT id, username, bio, is_premium
-        FROM users
-        WHERE id = $1
+        SELECT
+            u.id,
+            u.username,
+            u.bio,
+            u.is_premium,
+            ARRAY(
+                SELECT c.slug
+                FROM user_interests ui
+                JOIN categories c ON c.id = ui.category_id
+                WHERE ui.user_id = u.id
+                ORDER BY c.slug
+            ) AS interest_slugs,
+            COALESCE(
+                (SELECT jsonb_object_agg(fi.item_type, fi.asset_data)
+                 FROM user_flare uf
+                 JOIN flare_items fi ON fi.id = uf.flare_item_id
+                 WHERE uf.user_id = u.id AND uf.is_equipped = TRUE),
+                '{}'::jsonb
+            ) AS flare
+        FROM users u
+        WHERE u.id = $1
         "#,
     )
     .bind(partner_id)
     .fetch_optional(&state.db)
     .await?;
 
-    let interest_slugs = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT c.slug
-        FROM user_interests ui
-        JOIN categories c ON c.id = ui.category_id
-        WHERE ui.user_id = $1
-        ORDER BY c.slug
-        "#,
-    )
-    .bind(partner_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let flare = sqlx::query_as::<_, (String, serde_json::Value)>(
-        r#"
-        SELECT fi.item_type, fi.asset_data
-        FROM user_flare uf
-        JOIN flare_items fi ON fi.id = uf.flare_item_id
-        WHERE uf.user_id = $1
-          AND uf.is_equipped = TRUE
-        "#,
-    )
-    .bind(partner_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let flare_map = flare.into_iter().fold(
-        serde_json::Map::new(),
-        |mut acc, (item_type, asset_data)| {
-            acc.insert(item_type, asset_data);
-            acc
-        },
-    );
-
-    if let Some((id, username, bio, is_premium)) = partner {
+    if let Some((id, username, bio, is_premium, interest_slugs, flare)) = row {
         let badges = if is_premium { vec!["premium"] } else { vec![] };
+        let interests = interest_slugs.unwrap_or_default();
 
         return Ok(serde_json::json!({
             "id": id,
             "username": username,
             "bio": bio,
             "badges": badges,
-            "interests": interest_slugs,
-            "flare": flare_map
+            "interests": interests,
+            "flare": flare
         }));
     }
 
