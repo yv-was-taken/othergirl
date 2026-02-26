@@ -218,9 +218,11 @@
           case 'cooldown':
             setCooldown(Number(event.seconds ?? 5));
             break;
+          case 'vote_acknowledged':
+            toast.message('Your vote has been recorded');
+            break;
           case 'partner_keep_vote':
-            keepPromptOpen = true;
-            toast.message('Partner voted on keep');
+            // kept for backwards-compatibility; no longer sent by backend
             break;
           case 'keep_result':
             keepPromptOpen = false;

@@ -159,6 +159,7 @@ pub enum ServerEvent {
         message_id: Uuid,
         reader_id: Uuid,
     },
+    VoteAcknowledged,
     PartnerKeepVote,
     KeepResult {
         both_kept: bool,
@@ -339,7 +340,7 @@ async fn handle_socket(
                             continue;
                         };
 
-                        match process_chat_event(&state, chat_id, user_id, event).await {
+                        match process_chat_event(&state, chat_id, user_id, event, &outbound_tx).await {
                             Ok(should_leave) => {
                                 if should_leave {
                                     left_explicitly = true;
@@ -454,6 +455,7 @@ async fn process_chat_event(
     chat_id: Uuid,
     user_id: Uuid,
     event: ClientEvent,
+    private_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) -> AppResult<bool> {
     match event {
         ClientEvent::Message { content } => {
@@ -587,16 +589,12 @@ async fn process_chat_event(
         ClientEvent::KeepVote { keep } => {
             match register_keep_vote(state, chat_id, user_id, keep).await? {
                 KeepVoteRegistration::Pending => {
-                    state
-                        .chat_hub
-                        .send(chat_id, ServerEvent::PartnerKeepVote)
-                        .await;
+                    // Send acknowledgment only to the voter -- never broadcast
+                    // to the partner, as that would reveal vote timing/identity.
+                    let _ = private_tx.send(ServerEvent::VoteAcknowledged);
                 }
                 KeepVoteRegistration::Resolved { both_kept } => {
-                    state
-                        .chat_hub
-                        .send(chat_id, ServerEvent::PartnerKeepVote)
-                        .await;
+                    // Both users have voted; broadcast the result to the chat.
                     state
                         .chat_hub
                         .send(chat_id, ServerEvent::KeepResult { both_kept })
