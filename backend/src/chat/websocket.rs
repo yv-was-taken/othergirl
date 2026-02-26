@@ -462,11 +462,41 @@ async fn process_chat_event(
                 return Ok(false);
             }
 
+            // Safety scan is fail-closed: if scan_message returns Err, the `?`
+            // propagates it and the message is never stored or broadcast.
             let safety = safety::scan_message(state, chat_id, user_id, trimmed).await?;
+
+            // If the safety scan determined the message should be rejected
+            // (e.g. blocklist keyword match), refuse to store or broadcast it.
+            if safety.rejected {
+                return Err(AppError::Forbidden(
+                    "message rejected by safety filter".to_owned(),
+                ));
+            }
+
+            // Use the normalized content from the safety scan for storage and
+            // broadcast. This ensures the exact content that was scanned is
+            // what gets stored -- no divergence possible.
+            let safe_content = &safety.normalized_content;
+
+            // Skip empty messages that became empty after normalization
+            // (e.g. messages consisting entirely of zero-width characters).
+            if safe_content.is_empty() {
+                return Ok(false);
+            }
+
+            // Verify the content we're about to store/broadcast is exactly
+            // what was scanned -- guards against any future code path that
+            // might mutate the content between the scan and here.
+            assert!(
+                safety.verify_content(safe_content),
+                "content integrity check failed: scanned content differs from stored content"
+            );
+
             let (content_encrypted, nonce) = encryption::encrypt_for_chat(
                 &state.db,
                 chat_id,
-                trimmed,
+                safe_content,
                 &state.config.chat_key_encryption_key,
                 &state.config.legacy_chat_key_encryption_keys,
             )
@@ -512,7 +542,7 @@ async fn process_chat_event(
                         id: message_id,
                         chat_id,
                         sender_id: user_id,
-                        content: trimmed.to_owned(),
+                        content: safe_content.to_owned(),
                         timestamp: created_at,
                         flagged: false,
                     },
