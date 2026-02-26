@@ -28,18 +28,20 @@ type ChatState = {
   cooldownSeconds: number;
 };
 
-const initial: ChatState = {
-  chatId: null,
-  partner: null,
-  messages: [],
-  queued: false,
-  queuePosition: null,
-  queueWaitSeconds: null,
-  partnerTyping: false,
-  cooldownSeconds: 0
-};
+function makeInitial(): ChatState {
+  return {
+    chatId: null,
+    partner: null,
+    messages: [],
+    queued: false,
+    queuePosition: null,
+    queueWaitSeconds: null,
+    partnerTyping: false,
+    cooldownSeconds: 0
+  };
+}
 
-export const chat = writable<ChatState>(initial);
+export const chat = writable<ChatState>(makeInitial());
 
 export function setQueue(position: number, waitSeconds: number) {
   chat.update((state) => ({
@@ -95,5 +97,5 @@ export function setCooldown(seconds: number) {
 }
 
 export function resetChatState() {
-  chat.set(initial);
+  chat.set(makeInitial());
 }
