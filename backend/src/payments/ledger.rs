@@ -12,6 +12,7 @@ pub enum TxType {
     AwardSent,
     AwardReceived,
     FlarePurchase,
+    EmotePurchase,
     Cashout,
     CashoutRefund,
 }
@@ -23,6 +24,7 @@ impl TxType {
             Self::AwardSent => "award_sent",
             Self::AwardReceived => "award_received",
             Self::FlarePurchase => "flare_purchase",
+            Self::EmotePurchase => "emote_purchase",
             Self::Cashout => "cashout",
             Self::CashoutRefund => "cashout_refund",
         }

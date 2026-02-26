@@ -102,7 +102,7 @@ pub async fn purchase_emote(
             &mut tx,
             auth_user.user_id,
             -emote.price_sparks,
-            TxType::FlarePurchase,
+            TxType::EmotePurchase,
             Some(payload.emote_id),
         )
         .await?;
