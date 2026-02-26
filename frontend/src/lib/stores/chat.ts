@@ -92,6 +92,15 @@ export function setPartnerTyping(isTyping: boolean) {
   chat.update((state) => ({ ...state, partnerTyping: isTyping }));
 }
 
+export function markMessageRead(messageId: string) {
+  chat.update((state) => ({
+    ...state,
+    messages: state.messages.map((m) =>
+      m.id === messageId ? { ...m, is_read: true } : m
+    )
+  }));
+}
+
 export function setCooldown(seconds: number) {
   chat.update((state) => ({ ...state, cooldownSeconds: seconds }));
 }
