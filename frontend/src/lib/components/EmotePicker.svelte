@@ -37,16 +37,23 @@
   }
 
   function onclickoutside(e: MouseEvent) {
-    if (!open) return;
     const target = e.target as Node;
     if (pickerEl?.contains(target)) return;
     if (anchorEl?.contains(target)) return;
     open = false;
     search = '';
   }
-</script>
 
-<svelte:window onkeydown={onkeydown} onmousedown={onclickoutside} />
+  $effect(() => {
+    if (!open) return;
+    window.addEventListener('keydown', onkeydown);
+    window.addEventListener('mousedown', onclickoutside);
+    return () => {
+      window.removeEventListener('keydown', onkeydown);
+      window.removeEventListener('mousedown', onclickoutside);
+    };
+  });
+</script>
 
 {#if open}
   <div
