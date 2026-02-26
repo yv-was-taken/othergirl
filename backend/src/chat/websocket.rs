@@ -551,17 +551,24 @@ async fn process_chat_event(
             }
         }
         ClientEvent::KeepVote { keep } => {
-            let result = register_keep_vote(state, chat_id, user_id, keep).await?;
-            state
-                .chat_hub
-                .send(chat_id, ServerEvent::PartnerKeepVote)
-                .await;
-
-            if let Some(both_kept) = result {
-                state
-                    .chat_hub
-                    .send(chat_id, ServerEvent::KeepResult { both_kept })
-                    .await;
+            match register_keep_vote(state, chat_id, user_id, keep).await? {
+                KeepVoteRegistration::Pending => {
+                    state
+                        .chat_hub
+                        .send(chat_id, ServerEvent::PartnerKeepVote)
+                        .await;
+                }
+                KeepVoteRegistration::Resolved { both_kept } => {
+                    state
+                        .chat_hub
+                        .send(chat_id, ServerEvent::PartnerKeepVote)
+                        .await;
+                    state
+                        .chat_hub
+                        .send(chat_id, ServerEvent::KeepResult { both_kept })
+                        .await;
+                }
+                KeepVoteRegistration::NoopAlreadyResolved => {}
             }
         }
         ClientEvent::Award {
@@ -621,12 +628,39 @@ async fn ensure_chat_member(state: &AppState, chat_id: Uuid, user_id: Uuid) -> A
     Ok(())
 }
 
+enum KeepVoteRegistration {
+    Pending,
+    Resolved { both_kept: bool },
+    NoopAlreadyResolved,
+}
+
 async fn register_keep_vote(
     state: &AppState,
     chat_id: Uuid,
     voter_id: Uuid,
     keep: bool,
-) -> AppResult<Option<bool>> {
+) -> AppResult<KeepVoteRegistration> {
+    let (user_a_id, user_b_id, was_kept, keep_votes_resolved) =
+        sqlx::query_as::<_, (Uuid, Uuid, bool, bool)>(
+            r#"
+        SELECT user_a_id, user_b_id, is_kept, keep_votes_resolved
+        FROM chats
+        WHERE id = $1
+        "#,
+        )
+        .bind(chat_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
+
+    if voter_id != user_a_id && voter_id != user_b_id {
+        return Err(AppError::Forbidden("not a chat participant".to_owned()));
+    }
+
+    if keep_votes_resolved {
+        return Ok(KeepVoteRegistration::NoopAlreadyResolved);
+    }
+
     if keep {
         let row = sqlx::query_as::<_, (bool, i32)>(
             r#"
@@ -648,22 +682,6 @@ async fn register_keep_vote(
         }
     }
 
-    let (user_a_id, user_b_id, was_kept) = sqlx::query_as::<_, (Uuid, Uuid, bool)>(
-        r#"
-        SELECT user_a_id, user_b_id, is_kept
-        FROM chats
-        WHERE id = $1
-        "#,
-    )
-    .bind(chat_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
-
-    if voter_id != user_a_id && voter_id != user_b_id {
-        return Err(AppError::Forbidden("not a chat participant".to_owned()));
-    }
-
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let vote_key = keep_vote_key(chat_id, voter_id);
     let _: () = conn
@@ -675,25 +693,36 @@ async fn register_keep_vote(
 
     let both_voted = a_vote.is_some() && b_vote.is_some();
     if !both_voted {
-        return Ok(None);
+        return Ok(KeepVoteRegistration::Pending);
     }
 
     let keep_a = a_vote.as_deref() == Some("1");
     let keep_b = b_vote.as_deref() == Some("1");
     let both_kept = keep_a && keep_b;
 
-    sqlx::query(
+    let mut tx = state.db.begin().await?;
+    let finalize_result = sqlx::query(
         r#"
         UPDATE chats
-        SET is_kept_by_a = $2, is_kept_by_b = $3
+        SET is_kept_by_a = $2,
+            is_kept_by_b = $3,
+            keep_votes_resolved = TRUE
         WHERE id = $1
+          AND keep_votes_resolved = FALSE
         "#,
     )
     .bind(chat_id)
     .bind(keep_a)
     .bind(keep_b)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+
+    if finalize_result.rows_affected() == 0 {
+        tx.rollback().await?;
+        let _: usize = conn.del(keep_vote_key(chat_id, user_a_id)).await?;
+        let _: usize = conn.del(keep_vote_key(chat_id, user_b_id)).await?;
+        return Ok(KeepVoteRegistration::NoopAlreadyResolved);
+    }
 
     if both_kept && !was_kept {
         sqlx::query(
@@ -704,14 +733,16 @@ async fn register_keep_vote(
             "#,
         )
         .bind(vec![user_a_id, user_b_id])
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
+
+    tx.commit().await?;
 
     let _: usize = conn.del(keep_vote_key(chat_id, user_a_id)).await?;
     let _: usize = conn.del(keep_vote_key(chat_id, user_b_id)).await?;
 
-    Ok(Some(both_kept))
+    Ok(KeepVoteRegistration::Resolved { both_kept })
 }
 
 async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppResult<()> {
