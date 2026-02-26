@@ -7,6 +7,6 @@ marked.setOptions({
 });
 
 export function renderMarkdown(input: string): string {
-  const raw = marked.parse(input) as string;
+  const raw = marked.parse(input, { async: false }) as string;
   return DOMPurify.sanitize(raw);
 }
