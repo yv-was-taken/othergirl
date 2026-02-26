@@ -4,7 +4,7 @@ use aes_gcm::{
 };
 use rand_core::{OsRng, RngCore};
 use sqlx::PgPool;
-use tracing::warn;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
@@ -55,6 +55,63 @@ pub async fn decrypt_for_chat(
     Ok(legacy_content_text.unwrap_or_default())
 }
 
+async fn try_unwrap_and_migrate(
+    db: &PgPool,
+    chat_id: Uuid,
+    stored: &[u8],
+    wrapping_key: &[u8; KEY_LEN],
+    legacy_wrapping_keys: &[[u8; KEY_LEN]],
+) -> AppResult<Vec<u8>> {
+    if stored.len() == KEY_LEN {
+        let wrapped = wrap_key(stored, wrapping_key)?;
+        sqlx::query(
+            r#"
+            UPDATE chat_keys
+            SET key_encrypted = $2, rotated_at = NOW()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(chat_id)
+        .bind(wrapped)
+        .execute(db)
+        .await?;
+        return Ok(stored.to_vec());
+    }
+
+    if let Ok(unwrapped) = unwrap_key(stored, wrapping_key) {
+        return Ok(unwrapped);
+    }
+
+    for legacy_key in legacy_wrapping_keys {
+        if let Ok(unwrapped) = unwrap_key(stored, legacy_key) {
+            let wrapped = wrap_key(unwrapped.as_slice(), wrapping_key)?;
+            sqlx::query(
+                r#"
+                UPDATE chat_keys
+                SET key_encrypted = $2, rotated_at = NOW()
+                WHERE chat_id = $1
+                "#,
+            )
+            .bind(chat_id)
+            .bind(wrapped)
+            .execute(db)
+            .await?;
+            warn!(
+                chat_id = %chat_id,
+                "migrated chat key from legacy wrapping key to current wrapping key"
+            );
+            return Ok(unwrapped);
+        }
+    }
+
+    error!(
+        chat_id = %chat_id,
+        legacy_keys_tried = legacy_wrapping_keys.len(),
+        "failed to unwrap chat key with current or any legacy wrapping key"
+    );
+    Err(AppError::Internal)
+}
+
 async fn get_or_create_key(
     db: &PgPool,
     chat_id: Uuid,
@@ -72,49 +129,8 @@ async fn get_or_create_key(
     .fetch_optional(db)
     .await?
     {
-        if stored.len() == KEY_LEN {
-            let wrapped = wrap_key(&stored, wrapping_key)?;
-            sqlx::query(
-                r#"
-                UPDATE chat_keys
-                SET key_encrypted = $2, rotated_at = NOW()
-                WHERE chat_id = $1
-                "#,
-            )
-            .bind(chat_id)
-            .bind(wrapped)
-            .execute(db)
-            .await?;
-            return Ok(stored);
-        }
-
-        if let Ok(unwrapped) = unwrap_key(stored.as_slice(), wrapping_key) {
-            return Ok(unwrapped);
-        }
-
-        for legacy_key in legacy_wrapping_keys {
-            if let Ok(unwrapped) = unwrap_key(stored.as_slice(), legacy_key) {
-                let wrapped = wrap_key(unwrapped.as_slice(), wrapping_key)?;
-                sqlx::query(
-                    r#"
-                    UPDATE chat_keys
-                    SET key_encrypted = $2, rotated_at = NOW()
-                    WHERE chat_id = $1
-                    "#,
-                )
-                .bind(chat_id)
-                .bind(wrapped)
-                .execute(db)
-                .await?;
-                warn!(
-                    chat_id = %chat_id,
-                    "migrated chat key from legacy wrapping key to current wrapping key"
-                );
-                return Ok(unwrapped);
-            }
-        }
-
-        return Err(AppError::Internal);
+        return try_unwrap_and_migrate(db, chat_id, &stored, wrapping_key, legacy_wrapping_keys)
+            .await;
     }
 
     let mut key = vec![0u8; KEY_LEN];
@@ -145,33 +161,7 @@ async fn get_or_create_key(
     .await?
     .ok_or(AppError::Internal)?;
 
-    if let Ok(unwrapped) = unwrap_key(stored.as_slice(), wrapping_key) {
-        return Ok(unwrapped);
-    }
-
-    for legacy_key in legacy_wrapping_keys {
-        if let Ok(unwrapped) = unwrap_key(stored.as_slice(), legacy_key) {
-            let wrapped = wrap_key(unwrapped.as_slice(), wrapping_key)?;
-            sqlx::query(
-                r#"
-                UPDATE chat_keys
-                SET key_encrypted = $2, rotated_at = NOW()
-                WHERE chat_id = $1
-                "#,
-            )
-            .bind(chat_id)
-            .bind(wrapped)
-            .execute(db)
-            .await?;
-            warn!(
-                chat_id = %chat_id,
-                "migrated chat key from legacy wrapping key to current wrapping key"
-            );
-            return Ok(unwrapped);
-        }
-    }
-
-    Err(AppError::Internal)
+    try_unwrap_and_migrate(db, chat_id, &stored, wrapping_key, legacy_wrapping_keys).await
 }
 
 fn wrap_key(raw_key: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>> {
