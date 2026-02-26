@@ -432,6 +432,7 @@ async fn process_chat_event(
                 chat_id,
                 trimmed,
                 &state.config.chat_key_encryption_key,
+                &state.config.legacy_chat_key_encryption_keys,
             )
             .await?;
 

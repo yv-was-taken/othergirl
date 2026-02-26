@@ -163,6 +163,7 @@ pub async fn get_chat(
             nonce,
             content_text,
             &state.config.chat_key_encryption_key,
+            &state.config.legacy_chat_key_encryption_keys,
         )
         .await?;
 

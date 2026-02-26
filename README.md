@@ -45,8 +45,13 @@ Othergirl is a privacy-first random 1:1 text chat platform with category/languag
 ```bash
 cd backend
 cp .env.example .env
+# set JWT_SECRET in .env (example: openssl rand -base64 48)
 cargo run
 ```
+
+`JWT_SECRET` is required. For upgrades from older placeholder-based deployments,
+chat keys are rewrapped on access automatically; use
+`CHAT_KEY_ENCRYPTION_KEY_LEGACY_B64` for custom legacy wrapping-key migration.
 
 2. Frontend
 
@@ -75,6 +80,7 @@ From repo root:
 - ensure Docker daemon is running,
 - start/create local PostgreSQL and Redis containers,
 - create missing `backend/.env` and `frontend/.env` from examples,
+- require a real `JWT_SECRET` in `backend/.env` for backend startup,
 - install frontend deps (if needed),
 - run backend (`cargo run`) and frontend (`bun run dev`) together.
 
