@@ -462,11 +462,41 @@ async fn process_chat_event(
                 return Ok(false);
             }
 
+            // Safety scan is fail-closed: if scan_message returns Err, the `?`
+            // propagates it and the message is never stored or broadcast.
             let safety = safety::scan_message(state, chat_id, user_id, trimmed).await?;
+
+            // If the safety scan determined the message should be rejected
+            // (e.g. blocklist keyword match), refuse to store or broadcast it.
+            if safety.rejected {
+                return Err(AppError::Forbidden(
+                    "message rejected by safety filter".to_owned(),
+                ));
+            }
+
+            // Use the normalized content from the safety scan for storage and
+            // broadcast. This ensures the exact content that was scanned is
+            // what gets stored -- no divergence possible.
+            let safe_content = &safety.normalized_content;
+
+            // Skip empty messages that became empty after normalization
+            // (e.g. messages consisting entirely of zero-width characters).
+            if safe_content.is_empty() {
+                return Ok(false);
+            }
+
+            // Verify the content we're about to store/broadcast is exactly
+            // what was scanned -- guards against any future code path that
+            // might mutate the content between the scan and here.
+            assert!(
+                safety.verify_content(safe_content),
+                "content integrity check failed: scanned content differs from stored content"
+            );
+
             let (content_encrypted, nonce) = encryption::encrypt_for_chat(
                 &state.db,
                 chat_id,
-                trimmed,
+                safe_content,
                 &state.config.chat_key_encryption_key,
                 &state.config.legacy_chat_key_encryption_keys,
             )
@@ -498,6 +528,10 @@ async fn process_chat_event(
                 .bind(serde_json::json!(safety.reasons))
                 .execute(&state.db)
                 .await?;
+
+                return Err(AppError::BadRequest(
+                    "message rejected by safety filter".to_owned(),
+                ));
             }
 
             state
@@ -508,9 +542,9 @@ async fn process_chat_event(
                         id: message_id,
                         chat_id,
                         sender_id: user_id,
-                        content: trimmed.to_owned(),
+                        content: safe_content.to_owned(),
                         timestamp: created_at,
-                        flagged: safety.flagged,
+                        flagged: false,
                     },
                 )
                 .await;
@@ -805,61 +839,46 @@ async fn resolve_partner_payload(
         .await?
         .ok_or_else(|| AppError::NotFound("chat not found".to_owned()))?;
 
-    let partner = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, bool, Option<Vec<String>>, serde_json::Value)>(
         r#"
-        SELECT id, username, bio, is_premium
-        FROM users
-        WHERE id = $1
+        SELECT
+            u.id,
+            u.username,
+            u.bio,
+            u.is_premium,
+            ARRAY(
+                SELECT c.slug
+                FROM user_interests ui
+                JOIN categories c ON c.id = ui.category_id
+                WHERE ui.user_id = u.id
+                ORDER BY c.slug
+            ) AS interest_slugs,
+            COALESCE(
+                (SELECT jsonb_object_agg(fi.item_type, fi.asset_data)
+                 FROM user_flare uf
+                 JOIN flare_items fi ON fi.id = uf.flare_item_id
+                 WHERE uf.user_id = u.id AND uf.is_equipped = TRUE),
+                '{}'::jsonb
+            ) AS flare
+        FROM users u
+        WHERE u.id = $1
         "#,
     )
     .bind(partner_id)
     .fetch_optional(&state.db)
     .await?;
 
-    let interest_slugs = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT c.slug
-        FROM user_interests ui
-        JOIN categories c ON c.id = ui.category_id
-        WHERE ui.user_id = $1
-        ORDER BY c.slug
-        "#,
-    )
-    .bind(partner_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let flare = sqlx::query_as::<_, (String, serde_json::Value)>(
-        r#"
-        SELECT fi.item_type, fi.asset_data
-        FROM user_flare uf
-        JOIN flare_items fi ON fi.id = uf.flare_item_id
-        WHERE uf.user_id = $1
-          AND uf.is_equipped = TRUE
-        "#,
-    )
-    .bind(partner_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let flare_map = flare.into_iter().fold(
-        serde_json::Map::new(),
-        |mut acc, (item_type, asset_data)| {
-            acc.insert(item_type, asset_data);
-            acc
-        },
-    );
-
-    if let Some((id, username, bio, is_premium)) = partner {
+    if let Some((id, username, bio, is_premium, interest_slugs, flare)) = row {
         let badges = if is_premium { vec!["premium"] } else { vec![] };
+        let interests = interest_slugs.unwrap_or_default();
 
         return Ok(serde_json::json!({
             "id": id,
             "username": username,
             "bio": bio,
             "badges": badges,
-            "interests": interest_slugs,
-            "flare": flare_map
+            "interests": interests,
+            "flare": flare
         }));
     }
 
