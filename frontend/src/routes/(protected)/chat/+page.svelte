@@ -158,12 +158,11 @@
   }
 
   function connectToChat(chatId: string) {
-    const token = get(auth).token;
-    if (!token) return;
+    if (!get(auth).token) return;
 
     socket?.close();
     connectionError = '';
-    socket = connectChatSocket(chatId, token, {
+    socket = connectChatSocket(chatId, () => get(auth).token, {
       onEvent(event) {
         switch (event.type) {
           case 'queued':
