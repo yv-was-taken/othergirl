@@ -1,10 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { toast } from 'svelte-sonner';
 
   import { apiFetch } from '$lib/api';
-  import { setSession } from '$lib/stores/auth';
+  import { auth, setSession } from '$lib/stores/auth';
 
   let mode: 'login' | 'register' = $state('login');
 
@@ -19,6 +20,12 @@
   const OAUTH_NEXT_KEY = 'othergirl.oauth.next';
 
   onMount(async () => {
+    const state = get(auth);
+    if (state.token && state.user) {
+      await goto('/chat', { replaceState: true });
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const oauthCode = params.get('oauth_code');
 
