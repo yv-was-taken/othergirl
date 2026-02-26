@@ -79,12 +79,13 @@ pub async fn create_report(
         ));
     }
 
-    let (score, suspended) = recalculate_reputation(&state, payload.reported_id).await?;
+    let report_id = inserted.unwrap().0;
+
+    recalculate_reputation(&state, payload.reported_id).await?;
 
     Ok(Json(serde_json::json!({
-        "reported": true,
-        "reputation_score": score,
-        "is_suspended": suspended
+        "report_id": report_id,
+        "reported": true
     })))
 }
 
