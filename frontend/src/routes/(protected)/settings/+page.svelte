@@ -10,7 +10,8 @@
   let connectStatus: { stripe_account_id: string; payouts_enabled: boolean } | null = $state(null);
   let blockedUsers: { id: string; username: string; created_at: string }[] = $state([]);
   let cashoutAmount = $state(1000);
-  let buyAmount = $state(500);
+  let sparkBundles: { index: number; sparks: number; price_cents: number }[] = $state([]);
+  let selectedBundleIndex = $state(0);
   let emoteToken = $state(':my_emote:');
   let emoteName = $state('My Emote');
   let emotePrice = $state(100);
@@ -24,7 +25,7 @@
     if (!$auth.token) return;
 
     try {
-      const [meRes, balanceRes, txRes, cashoutRes, blocksRes] = await Promise.all([
+      const [meRes, balanceRes, txRes, cashoutRes, blocksRes, bundlesRes] = await Promise.all([
         apiFetch<{
           id: string;
           username: string;
@@ -36,13 +37,15 @@
         apiFetch<{ balance: number }>('/api/sparks/balance'),
         apiFetch<{ transactions: { id: string; amount: number; transaction_type: string; created_at: string }[] }>('/api/sparks/transactions'),
         apiFetch<{ connect: { stripe_account_id: string; payouts_enabled: boolean } | null }>('/api/cashout/status'),
-        apiFetch<{ blocked_users: { id: string; username: string; created_at: string }[] }>('/api/blocks')
+        apiFetch<{ blocked_users: { id: string; username: string; created_at: string }[] }>('/api/blocks'),
+        apiFetch<{ bundles: { index: number; sparks: number; price_cents: number }[] }>('/api/payments/spark-bundles')
       ]);
 
       balance = balanceRes.balance;
       transactions = txRes.transactions ?? [];
       connectStatus = cashoutRes.connect;
       blockedUsers = blocksRes.blocked_users ?? [];
+      sparkBundles = bundlesRes.bundles ?? [];
 
       if ($auth.token) {
         setSession($auth.token, {
@@ -71,11 +74,11 @@
     }
   }
 
-  async function buySparks() {
+  async function buySparks(bundleIndex: number) {
     try {
       const response = await apiFetch<{ checkout_url: string }>('/api/payments/buy-sparks', {
         method: 'POST',
-        body: JSON.stringify({ amount: buyAmount })
+        body: JSON.stringify({ bundle_index: bundleIndex })
       });
       window.location.assign(response.checkout_url);
     } catch (error) {
@@ -163,10 +166,20 @@
       <div class="surface space-y-3 p-5">
         <h2 class="text-lg font-semibold">Sparks</h2>
         <p class="text-sm text-[var(--text-secondary)]">Current balance: {balance}</p>
-        <input class="input" type="number" min="1" bind:value={buyAmount} />
-        <div class="flex gap-2">
-          <button class="btn-primary flex-1" onclick={buySparks}>Buy (Stripe)</button>
-        </div>
+        {#if sparkBundles.length === 0}
+          <p class="text-sm text-[var(--text-muted)]">Loading bundles...</p>
+        {:else}
+          <div class="grid gap-2">
+            {#each sparkBundles as bundle}
+              <button
+                class="btn-primary w-full"
+                onclick={() => buySparks(bundle.index)}
+              >
+                {bundle.sparks} sparks &mdash; ${(bundle.price_cents / 100).toFixed(2)}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
 
       <div class="surface space-y-3 p-5">
