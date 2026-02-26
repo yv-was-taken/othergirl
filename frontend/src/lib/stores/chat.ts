@@ -74,11 +74,16 @@ export function setMatch(
   }));
 }
 
+const MAX_MESSAGES = 200;
+
 export function pushMessage(message: ChatMessage) {
-  chat.update((state) => ({
-    ...state,
-    messages: [...state.messages, message]
-  }));
+  chat.update((state) => {
+    const updated = [...state.messages, message];
+    if (updated.length > MAX_MESSAGES) {
+      updated.splice(0, updated.length - MAX_MESSAGES);
+    }
+    return { ...state, messages: updated };
+  });
 }
 
 export function setPartnerTyping(isTyping: boolean) {
