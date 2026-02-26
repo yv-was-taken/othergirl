@@ -114,13 +114,18 @@ pub async fn register(
     }))
 }
 
+/// Dummy Argon2 hash used to equalize timing when a user is not found.
+/// This prevents attackers from enumerating valid emails via response-time differences.
+const DUMMY_ARGON2_HASH: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$bm90YXJlYWxzYWx0YXRhbGw$TFy3kCpETfGh0Xn8JoRkzl+YpLxqOaz5mpMFKh/S5bk";
+
 pub async fn login(
     State(state): State<AppState>,
     Json(payload): Json<LoginRequest>,
 ) -> AppResult<Json<AuthResponse>> {
     payload.validate()?;
 
-    let user = sqlx::query_as::<_, UserAuthRow>(
+    let maybe_user = sqlx::query_as::<_, UserAuthRow>(
         r#"
         SELECT id, username, email, password_hash, is_premium, is_age_verified, is_suspended, created_at
         FROM users
@@ -129,18 +134,33 @@ pub async fn login(
     )
     .bind(payload.email)
     .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("invalid email or password".to_owned()))?;
+    .await?;
+
+    // Determine the hash to verify against. When no user is found, use a
+    // dummy hash so that the Argon2 work is always performed, preventing
+    // timing-based email enumeration.
+    let hash_to_verify = maybe_user
+        .as_ref()
+        .and_then(|u| u.password_hash.as_deref())
+        .unwrap_or(DUMMY_ARGON2_HASH);
+
+    let password_valid = verify_password(hash_to_verify, &payload.password).unwrap_or(false);
+
+    // Now check all conditions, returning the same error for every failure.
+    let user = match maybe_user {
+        Some(u) => u,
+        None => {
+            return Err(AppError::Unauthorized(
+                "invalid email or password".to_owned(),
+            ));
+        }
+    };
 
     if user.is_suspended {
         return Err(AppError::Forbidden("account suspended".to_owned()));
     }
 
-    let hash = user.password_hash.as_deref().ok_or_else(|| {
-        AppError::Unauthorized("password login unavailable for this account".to_owned())
-    })?;
-
-    if !verify_password(hash, &payload.password)? {
+    if user.password_hash.is_none() || !password_valid {
         return Err(AppError::Unauthorized(
             "invalid email or password".to_owned(),
         ));
