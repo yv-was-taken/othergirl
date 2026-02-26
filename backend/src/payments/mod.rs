@@ -9,6 +9,7 @@ use crate::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/subscribe", post(handlers::subscribe))
+        .route("/spark-bundles", get(handlers::spark_bundles))
         .route("/buy-sparks", post(handlers::buy_sparks))
         .route("/webhook", post(handlers::webhook))
         .route("/balance", get(handlers::balance))

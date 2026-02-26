@@ -43,6 +43,12 @@ impl FromRef<AppState> for JwtSettings {
     }
 }
 
+impl FromRef<AppState> for redis::Client {
+    fn from_ref(state: &AppState) -> Self {
+        state.redis.clone()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -71,15 +77,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     matchmaking::matcher::spawn_matcher(state.clone());
     payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
-    let cors = if config.cors_origin == "*" {
-        CorsLayer::very_permissive()
-    } else {
-        let origin = config
-            .cors_origin
-            .parse::<axum::http::HeaderValue>()
-            .expect("invalid CORS_ORIGIN header value");
+    if config.cors_origin.trim() == "*" {
+        panic!(
+            "CORS_ORIGIN is set to \"*\" (wildcard). \
+             This allows any website to make authenticated requests to the API. \
+             Set CORS_ORIGIN to a specific origin, e.g. \"http://localhost:5173\" \
+             or \"https://your-domain.com\". Multiple origins can be comma-separated."
+        );
+    }
 
-        CorsLayer::new().allow_origin(origin)
+    let cors = {
+        let origins: Vec<axum::http::HeaderValue> = config
+            .cors_origin
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|o| {
+                o.parse::<axum::http::HeaderValue>()
+                    .unwrap_or_else(|_| panic!("invalid CORS_ORIGIN value: {o:?}"))
+            })
+            .collect();
+
+        if origins.is_empty() {
+            panic!("CORS_ORIGIN must contain at least one origin");
+        }
+
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
     };
 
     let api = Router::new()
