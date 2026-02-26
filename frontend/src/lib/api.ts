@@ -28,12 +28,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     const fallback = `Request failed (${response.status})`;
     const text = await response.text();
 
+    let errorMessage = fallback;
     try {
       const parsed = JSON.parse(text) as { error?: string };
-      throw new Error(parsed.error ?? fallback);
+      errorMessage = parsed.error ?? fallback;
     } catch {
-      throw new Error(text || fallback);
+      errorMessage = text || fallback;
     }
+    throw new Error(errorMessage);
   }
 
   if (response.status === 204) {
