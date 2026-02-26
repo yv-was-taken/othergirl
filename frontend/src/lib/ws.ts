@@ -31,7 +31,7 @@ export type ChatSocket = {
   close: () => void;
 };
 
-export function connectChatSocket(chatId: string, token: string, handlers: WsHandlers): ChatSocket {
+export function connectChatSocket(chatId: string, getToken: () => string | null, handlers: WsHandlers): ChatSocket {
   let socket: WebSocket | null = null;
   let retries = 0;
   let manualClose = false;
@@ -39,6 +39,12 @@ export function connectChatSocket(chatId: string, token: string, handlers: WsHan
   const maxRetries = 5;
 
   const connect = () => {
+    const token = getToken();
+    if (!token) {
+      handlers.onEvent({ type: 'error', code: 'NO_TOKEN', message: 'No auth token available' });
+      return;
+    }
+
     const url = buildWsUrl();
     socket = new WebSocket(url);
     let authenticated = false;

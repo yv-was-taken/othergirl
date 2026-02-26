@@ -48,7 +48,7 @@ impl AppConfig {
         dotenvy::dotenv().ok();
 
         let jwt_secret = jwt_secret_from_env();
-        let chat_key_encryption_key = chat_key_encryption_key_from_env(&jwt_secret);
+        let chat_key_encryption_key = chat_key_encryption_key_from_env();
         let legacy_chat_key_encryption_keys =
             legacy_chat_key_encryption_keys_from_env(&jwt_secret, &chat_key_encryption_key);
         let public_api_base_url =
@@ -69,7 +69,8 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse::<i64>().ok())
                 .unwrap_or(60),
-            cors_origin: env::var("CORS_ORIGIN").unwrap_or_else(|_| "*".to_owned()),
+            cors_origin: env::var("CORS_ORIGIN")
+                .unwrap_or_else(|_| "http://localhost:5173".to_owned()),
             public_api_base_url: public_api_base_url.clone(),
             public_web_base_url: public_web_base_url.clone(),
             stripe_secret_key: optional_env("STRIPE_SECRET_KEY"),
@@ -144,12 +145,14 @@ fn env_usize(key: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn chat_key_encryption_key_from_env(jwt_secret: &str) -> [u8; 32] {
-    if let Some(raw) = optional_env("CHAT_KEY_ENCRYPTION_KEY_B64") {
-        return parse_chat_key(raw.as_str(), "CHAT_KEY_ENCRYPTION_KEY_B64");
-    }
-
-    derive_chat_key_encryption_key(jwt_secret)
+fn chat_key_encryption_key_from_env() -> [u8; 32] {
+    let raw = optional_env("CHAT_KEY_ENCRYPTION_KEY_B64").unwrap_or_else(|| {
+        panic!(
+            "CHAT_KEY_ENCRYPTION_KEY_B64 must be set — do not derive encryption keys from JWT secret. \
+             Generate one with: openssl rand -base64 32"
+        )
+    });
+    parse_chat_key(raw.as_str(), "CHAT_KEY_ENCRYPTION_KEY_B64")
 }
 
 fn legacy_chat_key_encryption_keys_from_env(
@@ -165,6 +168,10 @@ fn legacy_chat_key_encryption_keys_from_env(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+
+    // Include the key that would have been derived from the current JWT secret
+    // so messages encrypted under the old fallback scheme can still be decrypted.
+    keys.push(derive_chat_key_encryption_key(jwt_secret));
 
     for legacy_secret in INSECURE_JWT_SECRETS {
         if !jwt_secret.eq_ignore_ascii_case(legacy_secret) {

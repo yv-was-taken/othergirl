@@ -187,7 +187,27 @@ pub async fn end_chat_session(state: &AppState, user_a_id: Uuid, user_b_id: Uuid
 }
 
 pub async fn queue_keys(conn: &mut redis::aio::MultiplexedConnection) -> AppResult<Vec<String>> {
-    let mut keys: Vec<String> = conn.keys("queue:*").await?;
+    let mut keys: Vec<String> = Vec::new();
+    let mut cursor: u64 = 0;
+
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg("queue:*")
+            .arg("COUNT")
+            .arg(100)
+            .query_async(conn)
+            .await?;
+
+        keys.extend(batch);
+        cursor = next_cursor;
+
+        if cursor == 0 {
+            break;
+        }
+    }
+
     keys.sort_by(|left, right| {
         right
             .matches(':')

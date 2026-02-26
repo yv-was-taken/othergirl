@@ -78,16 +78,16 @@ pub async fn update_me(
         .execute(&mut *tx)
         .await?;
 
-        for category_id in interests.iter().copied() {
+        if !interests.is_empty() {
             sqlx::query(
                 r#"
                 INSERT INTO user_interests (user_id, category_id)
-                VALUES ($1, $2)
+                SELECT $1, UNNEST($2::UUID[])
                 ON CONFLICT DO NOTHING
                 "#,
             )
             .bind(auth_user.user_id)
-            .bind(category_id)
+            .bind(&interests)
             .execute(&mut *tx)
             .await?;
         }
