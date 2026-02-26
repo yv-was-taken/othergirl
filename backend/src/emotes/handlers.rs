@@ -14,6 +14,9 @@ use crate::{
     AppState,
 };
 
+/// Maximum allowed emote file size: 2 MB.
+const MAX_EMOTE_SIZE: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, serde::Deserialize)]
 pub struct PurchaseEmoteRequest {
     pub emote_id: Uuid,
@@ -197,6 +200,14 @@ pub async fn upload_emote(
     let file_bytes =
         file_bytes.ok_or_else(|| AppError::BadRequest("missing emote image file".to_owned()))?;
 
+    if file_bytes.len() > MAX_EMOTE_SIZE {
+        return Err(AppError::BadRequest(format!(
+            "file too large: {} bytes (max {})",
+            file_bytes.len(),
+            MAX_EMOTE_SIZE
+        )));
+    }
+
     if !is_valid_emote_token(token.as_str()) {
         return Err(AppError::BadRequest(
             "token must look like :my_emote:".to_owned(),
@@ -268,7 +279,7 @@ fn is_valid_emote_token(token: &str) -> bool {
 
 fn safe_extension(extension: &str) -> &str {
     match extension {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => extension,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => extension,
         _ => "png",
     }
 }
