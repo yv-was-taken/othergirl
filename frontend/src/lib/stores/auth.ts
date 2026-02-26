@@ -27,15 +27,26 @@ if (browser) {
   localStorage.removeItem('othergirl.token');
 }
 
+let lastWritten: string | null = browser
+  ? localStorage.getItem('othergirl.session')
+  : null;
+
 auth.subscribe((state) => {
   setAuthToken(state.token);
 
   if (!browser || !state.ready) return;
 
   if (state.token && state.user) {
-    localStorage.setItem('othergirl.session', JSON.stringify({ token: state.token, user: state.user }));
+    const serialized = JSON.stringify({ token: state.token, user: state.user });
+    if (serialized !== lastWritten) {
+      localStorage.setItem('othergirl.session', serialized);
+      lastWritten = serialized;
+    }
   } else {
-    localStorage.removeItem('othergirl.session');
+    if (lastWritten !== null) {
+      localStorage.removeItem('othergirl.session');
+      lastWritten = null;
+    }
   }
 });
 
