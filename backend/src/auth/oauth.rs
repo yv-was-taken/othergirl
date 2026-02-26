@@ -25,7 +25,7 @@ use crate::{
 };
 
 type HmacSha256 = Hmac<Sha256>;
-const TELEGRAM_AUTH_TTL_SECONDS: i64 = 24 * 60 * 60;
+const TELEGRAM_AUTH_TTL_SECONDS: i64 = 300;
 const OAUTH_EXCHANGE_CODE_TTL_SECONDS: u64 = 60;
 
 #[derive(Debug, Deserialize)]
@@ -248,7 +248,13 @@ fn oauth_identity_from_telegram(
     let auth_date_int = auth_date
         .parse::<i64>()
         .map_err(|_| AppError::BadRequest("invalid telegram auth_date".to_owned()))?;
-    if (Utc::now().timestamp() - auth_date_int).abs() > TELEGRAM_AUTH_TTL_SECONDS {
+    let now = Utc::now().timestamp();
+    if auth_date_int > now {
+        return Err(AppError::Unauthorized(
+            "telegram auth_date is in the future".to_owned(),
+        ));
+    }
+    if now - auth_date_int > TELEGRAM_AUTH_TTL_SECONDS {
         return Err(AppError::Unauthorized(
             "telegram auth payload expired".to_owned(),
         ));
