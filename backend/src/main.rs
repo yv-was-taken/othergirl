@@ -24,7 +24,7 @@ use axum::{
 };
 use sqlx::PgPool;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{auth::jwt::JwtSettings, config::AppConfig};
 
@@ -71,21 +71,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     matchmaking::matcher::spawn_matcher(state.clone());
     payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
-    if config.cors_origin == "*" {
-        warn!(
-            "CORS_ORIGIN is set to \"*\" — all origins are allowed. \
-             This is unsafe in production; set CORS_ORIGIN to a specific origin."
+    if config.cors_origin.trim() == "*" {
+        panic!(
+            "CORS_ORIGIN is set to \"*\" (wildcard). \
+             This allows any website to make authenticated requests to the API. \
+             Set CORS_ORIGIN to a specific origin, e.g. \"http://localhost:5173\" \
+             or \"https://your-domain.com\". Multiple origins can be comma-separated."
         );
     }
 
     let cors = {
-        let origin = config
+        let origins: Vec<axum::http::HeaderValue> = config
             .cors_origin
-            .parse::<axum::http::HeaderValue>()
-            .expect("invalid CORS_ORIGIN header value");
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|o| {
+                o.parse::<axum::http::HeaderValue>()
+                    .unwrap_or_else(|_| panic!("invalid CORS_ORIGIN value: {o:?}"))
+            })
+            .collect();
+
+        if origins.is_empty() {
+            panic!("CORS_ORIGIN must contain at least one origin");
+        }
 
         CorsLayer::new()
-            .allow_origin(origin)
+            .allow_origin(origins)
             .allow_methods(tower_http::cors::Any)
             .allow_headers(tower_http::cors::Any)
     };
