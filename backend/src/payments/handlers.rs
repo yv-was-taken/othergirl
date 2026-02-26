@@ -100,6 +100,16 @@ impl TryFrom<&str> for CashoutStatus {
     }
 }
 
+/// How many sparks equal one US dollar.  Used to convert spark balances
+/// into USD cents when creating Stripe transfers for cashouts.
+const SPARKS_PER_DOLLAR: i64 = 100;
+
+/// Convert a spark amount into USD cents for Stripe.
+/// `payout_cents = (sparks * 100) / SPARKS_PER_DOLLAR`
+fn sparks_to_cents(sparks: i64) -> i64 {
+    (sparks * 100) / SPARKS_PER_DOLLAR
+}
+
 const CASHOUT_RECONCILE_INTERVAL_SECS: u64 = 60;
 const CASHOUT_RECONCILE_MAX_BACKOFF_SECS: u64 = 15 * 60;
 const CASHOUT_RECONCILE_STALE_SECS: i64 = 300;
@@ -534,10 +544,11 @@ pub async fn cashout_request(
 
     let stripe_secret = stripe_secret(&state)?;
     let idempotency_key = cashout_request_id.to_string();
+    let payout_cents = sparks_to_cents(payload.amount);
     let transfer_id = match stripe::create_transfer(
         stripe_secret.as_str(),
         connect.0.as_str(),
-        payload.amount,
+        payout_cents,
         "usd",
         "Othergirl cashout",
         idempotency_key.as_str(),
@@ -818,10 +829,11 @@ async fn reconcile_pending_cashout(
     }
 
     let idempotency_key = cashout_request_id.to_string();
+    let payout_cents = sparks_to_cents(amount);
     match stripe::create_transfer(
         stripe_secret,
         stripe_account_id,
-        amount,
+        payout_cents,
         "usd",
         "Othergirl cashout",
         idempotency_key.as_str(),
@@ -1067,10 +1079,11 @@ async fn mark_old_pending_cashouts_for_manual_reconciliation(state: &AppState) -
     let mut count = 0u64;
     for (cashout_id, user_id, amount, stripe_account_id) in &stale {
         let idempotency_key = cashout_id.to_string();
+        let payout_cents = sparks_to_cents(*amount);
         match stripe::create_transfer(
             stripe_secret.as_str(),
             stripe_account_id.as_str(),
-            *amount,
+            payout_cents,
             "usd",
             "Othergirl cashout",
             idempotency_key.as_str(),
