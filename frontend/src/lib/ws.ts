@@ -12,6 +12,7 @@ export type ServerEvent =
   | { type: 'message'; id: string; chat_id: string; sender_id: string; content: string; timestamp: string; flagged: boolean }
   | { type: 'typing'; user_id: string; is_typing: boolean }
   | { type: 'read_receipt'; message_id: string; reader_id: string }
+  | { type: 'vote_acknowledged' }
   | { type: 'partner_keep_vote' }
   | { type: 'keep_result'; both_kept: boolean }
   | { type: 'award_received'; recipient_id: string; award_type: string; spark_amount: number; your_cut: number }
