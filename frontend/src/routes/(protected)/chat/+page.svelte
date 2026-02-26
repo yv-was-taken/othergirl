@@ -12,6 +12,7 @@
   import { auth } from '$lib/stores/auth';
   import {
     chat,
+    markMessageRead,
     pushMessage,
     resetChatState,
     setCooldown,
@@ -208,6 +209,9 @@
             break;
           case 'typing':
             setPartnerTyping(Boolean(event.is_typing));
+            break;
+          case 'read_receipt':
+            markMessageRead(String(event.message_id));
             break;
           case 'partner_left':
             toast.message('Partner left the chat');
