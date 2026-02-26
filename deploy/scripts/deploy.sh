@@ -41,6 +41,7 @@ rsync -a --delete \
   --exclude "backend/target/" \
   --exclude "frontend/node_modules/" \
   --exclude "frontend/.svelte-kit/" \
+  --exclude "uploads/" \
   "$REPO_ROOT/" "$APP_ROOT/"
 
 if [[ ! -f "$BACKEND_ENV_PATH" ]]; then
