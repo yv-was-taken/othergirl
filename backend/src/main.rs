@@ -43,6 +43,12 @@ impl FromRef<AppState> for JwtSettings {
     }
 }
 
+impl FromRef<AppState> for redis::Client {
+    fn from_ref(state: &AppState) -> Self {
+        state.redis.clone()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
