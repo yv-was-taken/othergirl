@@ -49,9 +49,41 @@ impl ChatHub {
             .clone()
     }
 
+    async fn receiver_for(&self, chat_id: Uuid) -> broadcast::Receiver<ServerEvent> {
+        let mut channels = self.channels.write().await;
+        channels
+            .entry(chat_id)
+            .or_insert_with(|| {
+                let (sender, _) = broadcast::channel(256);
+                sender
+            })
+            .subscribe()
+    }
+
     pub async fn send(&self, chat_id: Uuid, event: ServerEvent) {
         let sender = self.sender_for(chat_id).await;
         let _ = sender.send(event);
+    }
+
+    async fn prune_if_no_receivers(&self, chat_id: Uuid) -> bool {
+        let mut channels = self.channels.write().await;
+        let should_remove = channels
+            .get(&chat_id)
+            .map(|sender| sender.receiver_count() == 0)
+            .unwrap_or(false);
+
+        if should_remove {
+            channels.remove(&chat_id);
+            return true;
+        }
+
+        false
+    }
+
+    #[cfg(test)]
+    async fn channel_exists(&self, chat_id: Uuid) -> bool {
+        let channels = self.channels.read().await;
+        channels.contains_key(&chat_id)
     }
 }
 
@@ -254,7 +286,7 @@ async fn handle_socket(
                         if current_chat_id != Some(chat_id) {
                             current_chat_id = Some(chat_id);
                             if let Some(task) = chat_forward_task.take() {
-                                task.abort();
+                                abort_and_wait(task).await;
                             }
                             chat_forward_task = Some(spawn_chat_forwarder(&state, chat_id, outbound_tx.clone()).await);
 
@@ -336,7 +368,7 @@ async fn handle_socket(
 
     writer_task.abort();
     if let Some(task) = chat_forward_task {
-        task.abort();
+        abort_and_wait(task).await;
     }
 
     if let Some(chat_id) = current_chat_id {
@@ -404,13 +436,17 @@ async fn spawn_chat_forwarder(
     chat_id: Uuid,
     outbound_tx: mpsc::UnboundedSender<ServerEvent>,
 ) -> JoinHandle<()> {
-    let sender = state.chat_hub.sender_for(chat_id).await;
+    let mut broadcast_rx = state.chat_hub.receiver_for(chat_id).await;
     tokio::spawn(async move {
-        let mut broadcast_rx = sender.subscribe();
         while let Ok(event) = broadcast_rx.recv().await {
             let _ = outbound_tx.send(event);
         }
     })
+}
+
+async fn abort_and_wait(task: JoinHandle<()>) {
+    task.abort();
+    let _ = task.await;
 }
 
 async fn process_chat_event(
@@ -691,6 +727,7 @@ async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppR
     .await?;
 
     let Some((user_a_id, user_b_id)) = participants else {
+        let _ = state.chat_hub.prune_if_no_receivers(chat_id).await;
         return Ok(());
     };
 
@@ -705,25 +742,25 @@ async fn finalize_chat(state: &AppState, chat_id: Uuid, leaver_id: Uuid) -> AppR
     .execute(&state.db)
     .await?;
 
-    if update_result.rows_affected() == 0 {
-        return Ok(());
+    if update_result.rows_affected() > 0 {
+        queue::end_chat_session(state, user_a_id, user_b_id).await?;
+
+        state
+            .chat_hub
+            .send(chat_id, ServerEvent::PartnerLeft { user_id: leaver_id })
+            .await;
+        state
+            .chat_hub
+            .send(
+                chat_id,
+                ServerEvent::Cooldown {
+                    seconds: state.config.cooldown_seconds,
+                },
+            )
+            .await;
     }
 
-    queue::end_chat_session(state, user_a_id, user_b_id).await?;
-
-    state
-        .chat_hub
-        .send(chat_id, ServerEvent::PartnerLeft { user_id: leaver_id })
-        .await;
-    state
-        .chat_hub
-        .send(
-            chat_id,
-            ServerEvent::Cooldown {
-                seconds: state.config.cooldown_seconds,
-            },
-        )
-        .await;
+    let _ = state.chat_hub.prune_if_no_receivers(chat_id).await;
 
     Ok(())
 }
@@ -820,4 +857,56 @@ async fn clear_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()
 
 fn keep_vote_key(chat_id: Uuid, user_id: Uuid) -> String {
     format!("keep_vote:{chat_id}:{user_id}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn prune_removes_channel_when_no_receivers() {
+        let hub = ChatHub::new();
+        let chat_id = Uuid::new_v4();
+
+        let _ = hub.sender_for(chat_id).await;
+        assert!(hub.channel_exists(chat_id).await);
+
+        assert!(hub.prune_if_no_receivers(chat_id).await);
+        assert!(!hub.channel_exists(chat_id).await);
+    }
+
+    #[tokio::test]
+    async fn prune_keeps_channel_with_active_receivers() {
+        let hub = ChatHub::new();
+        let chat_id = Uuid::new_v4();
+
+        let receiver = hub.receiver_for(chat_id).await;
+        assert!(hub.channel_exists(chat_id).await);
+
+        assert!(!hub.prune_if_no_receivers(chat_id).await);
+        assert!(hub.channel_exists(chat_id).await);
+
+        drop(receiver);
+
+        assert!(hub.prune_if_no_receivers(chat_id).await);
+        assert!(!hub.channel_exists(chat_id).await);
+    }
+
+    #[tokio::test]
+    async fn prune_succeeds_after_aborted_receiver_task_finishes() {
+        let hub = ChatHub::new();
+        let chat_id = Uuid::new_v4();
+
+        let mut receiver = hub.receiver_for(chat_id).await;
+        let task = tokio::spawn(async move {
+            let _ = receiver.recv().await;
+        });
+
+        assert!(!hub.prune_if_no_receivers(chat_id).await);
+
+        abort_and_wait(task).await;
+
+        assert!(hub.prune_if_no_receivers(chat_id).await);
+        assert!(!hub.channel_exists(chat_id).await);
+    }
 }
