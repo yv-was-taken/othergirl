@@ -14,8 +14,8 @@ mkdir -p "$BACKUP_DIR"
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-  echo "another backup process is running; exiting"
-  exit 0
+  echo "another backup process is running; exiting" >&2
+  exit 75  # EX_TEMPFAIL — lets cron/monitoring detect the skip
 fi
 
 FILE="$BACKUP_DIR/${DB_NAME}_${DATE_STAMP}.sql.gz"
