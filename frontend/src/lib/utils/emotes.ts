@@ -63,7 +63,7 @@ const EMOTES: EmoteEntry[] = [
 
 const emoteMap = new Map(EMOTES.map((e) => [e.token, e.imageUrl]));
 
-export function getEmoteList(): EmoteEntry[] {
+export function getEmoteList(): readonly EmoteEntry[] {
   return EMOTES;
 }
 
