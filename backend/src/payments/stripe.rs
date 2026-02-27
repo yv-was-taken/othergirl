@@ -194,7 +194,7 @@ where
         .bearer_auth(secret_key)
         .send()
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("stripe GET request failed: {e}")))?;
 
     parse_response::<T>(response).await
 }
@@ -224,7 +224,7 @@ where
         request = request.header("Idempotency-Key", idempotency_key);
     }
 
-    let response = request.send().await.map_err(|_| AppError::Internal)?;
+    let response = request.send().await.map_err(|e| AppError::Internal(format!("stripe POST request failed: {e}")))?;
 
     parse_response::<T>(response).await
 }
@@ -234,13 +234,13 @@ where
     T: serde::de::DeserializeOwned,
 {
     let status = response.status();
-    let body = response.text().await.map_err(|_| AppError::Internal)?;
+    let body = response.text().await.map_err(|e| AppError::Internal(format!("failed to read stripe response body: {e}")))?;
 
     if !status.is_success() {
         return Err(map_stripe_error(status, body.as_str()));
     }
 
-    serde_json::from_str::<T>(body.as_str()).map_err(|_| AppError::Internal)
+    serde_json::from_str::<T>(body.as_str()).map_err(|e| AppError::Internal(format!("failed to parse stripe response: {e}")))
 }
 
 fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
@@ -289,7 +289,7 @@ fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
         return AppError::BadRequest(message);
     }
 
-    AppError::Internal
+    AppError::Internal(format!("stripe API error (HTTP {status}): {message}"))
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>, ()> {

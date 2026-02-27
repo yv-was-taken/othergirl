@@ -21,7 +21,7 @@ fn checked_nonce(bytes: &[u8]) -> AppResult<[u8; NONCE_LEN]> {
             actual = bytes.len(),
             "nonce has invalid length"
         );
-        AppError::Internal
+        AppError::Internal("nonce has invalid length".to_owned())
     })
 }
 
@@ -35,9 +35,9 @@ fn checked_cipher(key: &[u8]) -> AppResult<Aes256Gcm> {
             actual = key.len(),
             "AES-256-GCM key has invalid length"
         );
-        return Err(AppError::Internal);
+        return Err(AppError::Internal("AES-256-GCM key has invalid length".to_owned()));
     }
-    Aes256Gcm::new_from_slice(key).map_err(|_| AppError::Internal)
+    Aes256Gcm::new_from_slice(key).map_err(|e| AppError::Internal(e.to_string()))
 }
 
 pub async fn encrypt_for_chat(
@@ -56,7 +56,7 @@ pub async fn encrypt_for_chat(
 
     let ciphertext = cipher
         .encrypt(Nonce::from_slice(&nonce_arr), content.as_bytes())
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("encryption failed: {e}")))?;
 
     Ok((ciphertext, nonce_arr.to_vec()))
 }
@@ -77,9 +77,9 @@ pub async fn decrypt_for_chat(
 
         let decrypted = cipher
             .decrypt(Nonce::from_slice(&nonce_arr), ciphertext.as_ref())
-            .map_err(|_| AppError::Internal)?;
+            .map_err(|e| AppError::Internal(format!("decryption failed: {e}")))?;
 
-        return String::from_utf8(decrypted).map_err(|_| AppError::Internal);
+        return String::from_utf8(decrypted).map_err(|e| AppError::Internal(format!("decrypted content is not valid UTF-8: {e}")));
     }
 
     Ok(legacy_content_text.unwrap_or_default())
@@ -139,7 +139,7 @@ async fn try_unwrap_and_migrate(
         legacy_keys_tried = legacy_wrapping_keys.len(),
         "failed to unwrap chat key with current or any legacy wrapping key"
     );
-    Err(AppError::Internal)
+    Err(AppError::Internal("failed to unwrap chat key with current or any legacy wrapping key".to_owned()))
 }
 
 async fn get_or_create_key(
@@ -189,14 +189,14 @@ async fn get_or_create_key(
     .bind(chat_id)
     .fetch_optional(db)
     .await?
-    .ok_or(AppError::Internal)?;
+    .ok_or(AppError::Internal("chat key not found after insert".to_owned()))?;
 
     try_unwrap_and_migrate(db, chat_id, &stored, wrapping_key, legacy_wrapping_keys).await
 }
 
 fn wrap_key(raw_key: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>> {
     if raw_key.len() != KEY_LEN {
-        return Err(AppError::Internal);
+        return Err(AppError::Internal("raw key length mismatch in wrap_key".to_owned()));
     }
 
     let cipher = checked_cipher(wrapping_key)?;
@@ -205,7 +205,7 @@ fn wrap_key(raw_key: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>> 
     let nonce_arr = checked_nonce(&nonce_bytes)?;
     let encrypted = cipher
         .encrypt(Nonce::from_slice(&nonce_arr), raw_key)
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("key wrapping encryption failed: {e}")))?;
 
     let mut payload = nonce_bytes.to_vec();
     payload.extend(encrypted);
@@ -214,7 +214,7 @@ fn wrap_key(raw_key: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>> 
 
 fn unwrap_key(payload: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>> {
     if payload.len() <= NONCE_LEN {
-        return Err(AppError::Internal);
+        return Err(AppError::Internal("wrapped key payload too short".to_owned()));
     }
 
     let (nonce_bytes, ciphertext) = payload.split_at(NONCE_LEN);
@@ -222,10 +222,10 @@ fn unwrap_key(payload: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>
     let cipher = checked_cipher(wrapping_key)?;
     let decrypted = cipher
         .decrypt(Nonce::from_slice(&nonce_arr), ciphertext)
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("key unwrapping decryption failed: {e}")))?;
 
     if decrypted.len() != KEY_LEN {
-        return Err(AppError::Internal);
+        return Err(AppError::Internal("unwrapped key length mismatch".to_owned()));
     }
 
     Ok(decrypted)

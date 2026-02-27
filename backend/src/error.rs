@@ -1,5 +1,6 @@
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
+use tracing::error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -17,8 +18,8 @@ pub enum AppError {
     TooManyRequests(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
-    #[error("internal server error")]
-    Internal,
+    #[error("internal server error: {0}")]
+    Internal(String),
 }
 
 #[derive(Serialize)]
@@ -28,34 +29,38 @@ struct ErrorBody {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        let status = match self {
-            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden(_) => StatusCode::FORBIDDEN,
-            Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::Conflict(_) => StatusCode::CONFLICT,
-            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
-            Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        let (status, body) = match self {
+            Self::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            Self::Unauthorized(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
+            Self::Forbidden(_) => (StatusCode::FORBIDDEN, self.to_string()),
+            Self::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            Self::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
+            Self::TooManyRequests(_) => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),
+            Self::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
+            Self::Internal(ref msg) => {
+                error!(details = %msg, "internal server error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_owned(),
+                )
+            }
         };
 
-        let body = ErrorBody {
-            error: self.to_string(),
-        };
+        let body = ErrorBody { error: body };
 
         (status, Json(body)).into_response()
     }
 }
 
 impl From<sqlx::Error> for AppError {
-    fn from(_: sqlx::Error) -> Self {
-        Self::Internal
+    fn from(err: sqlx::Error) -> Self {
+        Self::Internal(err.to_string())
     }
 }
 
 impl From<redis::RedisError> for AppError {
-    fn from(_: redis::RedisError) -> Self {
-        Self::Internal
+    fn from(err: redis::RedisError) -> Self {
+        Self::Internal(err.to_string())
     }
 }
 
