@@ -2,7 +2,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use rand_core::{OsRng, RngCore};
+use aes_gcm::aead::rand_core::{OsRng, RngCore};
 use sqlx::PgPool;
 use tracing::{error, warn};
 use uuid::Uuid;
