@@ -30,7 +30,7 @@ type WsHandlers = {
 };
 
 export type ChatSocket = {
-  send: (event: Record<string, unknown>) => void;
+  send: (event: Record<string, unknown>) => boolean;
   close: () => void;
 };
 
@@ -104,8 +104,12 @@ export function connectChatSocket(chatId: string, getToken: () => string | null,
 
   return {
     send(event) {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.warn('[ws] send failed: socket is not open (readyState=%s)', socket?.readyState ?? 'null');
+        return false;
+      }
       socket.send(JSON.stringify(event));
+      return true;
     },
     close() {
       manualClose = true;
