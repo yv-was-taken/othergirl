@@ -1,9 +1,15 @@
 <script lang="ts">
+  import { page } from '$app/stores';
   import { auth, clearSession } from '$lib/stores/auth';
   import { theme, toggleTheme } from '$lib/stores/theme';
   import { Sun, Moon } from 'lucide-svelte';
 
   let mobileMenuOpen = $state(false);
+
+  function isActive(href: string, pathname: string): boolean {
+    if (href === '/') return pathname === '/';
+    return pathname === href || pathname.startsWith(href + '/');
+  }
 
   const links = [
     { href: '/', label: 'Home' },
@@ -31,7 +37,10 @@
     <!-- Desktop nav links -->
     <div class="hidden items-center gap-6 md:flex">
       {#each links as link}
-        <a href={link.href} class="text-sm text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]">{link.label}</a>
+        <a
+          href={link.href}
+          class="text-sm transition hover:text-[var(--text-primary)] {isActive(link.href, $page.url.pathname) ? 'border-b-2 border-[var(--accent)] text-[var(--accent)]' : 'text-[var(--text-secondary)]'}"
+        >{link.label}</a>
       {/each}
     </div>
 
@@ -63,7 +72,7 @@
       {#each links as link}
         <a
           href={link.href}
-          class="py-2 text-sm text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
+          class="py-2 text-sm transition hover:text-[var(--text-primary)] {isActive(link.href, $page.url.pathname) ? 'border-l-2 border-[var(--accent)] pl-2 text-[var(--accent)]' : 'text-[var(--text-secondary)]'}"
           onclick={() => mobileMenuOpen = false}
         >{link.label}</a>
       {/each}
