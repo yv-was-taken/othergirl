@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use axum::{extract::State, Json};
 use uuid::Uuid;
 use validator::Validate;
@@ -154,6 +156,27 @@ pub async fn update_my_flare(
             return Err(AppError::Forbidden(
                 "one or more flare items are not owned by user".to_owned(),
             ));
+        }
+
+        // Enforce one equipped item per item_type
+        let item_types = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT item_type
+            FROM flare_items
+            WHERE id = ANY($1)
+            "#,
+        )
+        .bind(&desired)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let mut seen = HashSet::new();
+        for item_type in &item_types {
+            if !seen.insert(item_type) {
+                return Err(AppError::Conflict(
+                    "only one flare item per type can be equipped".to_owned(),
+                ));
+            }
         }
     }
 
