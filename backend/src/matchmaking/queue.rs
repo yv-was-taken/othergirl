@@ -122,7 +122,7 @@ pub async fn join_or_match(
                 category_id: target.category_id,
                 language_id: target.language_id,
             })
-            .map_err(|_| AppError::Internal)?,
+            .map_err(|e| AppError::Internal(format!("failed to serialize queue metadata: {e}")))?,
             ttl,
         )
         .await?;
@@ -296,7 +296,7 @@ pub async fn set_match_notification(
     user_id: Uuid,
     notification: &MatchNotification,
 ) -> AppResult<()> {
-    let payload = serde_json::to_string(notification).map_err(|_| AppError::Internal)?;
+    let payload = serde_json::to_string(notification).map_err(|e| AppError::Internal(format!("failed to serialize match notification: {e}")))?;
     let _: () = conn
         .set_ex(
             match_notification_key(user_id),
@@ -317,7 +317,7 @@ pub async fn take_match_notification(
         let _: usize = conn.del(match_notification_key(user_id)).await?;
         return serde_json::from_str(payload.as_str())
             .map(Some)
-            .map_err(|_| AppError::Internal);
+            .map_err(|e| AppError::Internal(format!("failed to deserialize match notification: {e}")));
     }
     Ok(None)
 }
@@ -330,7 +330,7 @@ pub async fn read_queue_meta(
     if let Some(payload) = payload {
         return serde_json::from_str(payload.as_str())
             .map(Some)
-            .map_err(|_| AppError::Internal);
+            .map_err(|e| AppError::Internal(format!("failed to deserialize queue metadata: {e}")));
     }
     Ok(None)
 }

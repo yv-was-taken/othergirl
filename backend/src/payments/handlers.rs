@@ -173,7 +173,7 @@ pub async fn subscribe(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session.url.ok_or_else(|| AppError::Internal)?;
+    let checkout_url = session.url.ok_or_else(|| AppError::Internal("stripe checkout session missing URL".to_owned()))?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -270,7 +270,7 @@ pub async fn buy_sparks(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session.url.ok_or_else(|| AppError::Internal)?;
+    let checkout_url = session.url.ok_or_else(|| AppError::Internal("stripe checkout session missing URL".to_owned()))?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -305,7 +305,7 @@ pub async fn webhook(
     // Begin a transaction so the event is only recorded as processed when
     // all side effects succeed.  If processing fails the transaction rolls
     // back and Stripe can safely retry the webhook.
-    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(format!("failed to begin webhook transaction: {e}")))?;
 
     let inserted = sqlx::query_scalar::<_, String>(
         r#"
@@ -354,7 +354,7 @@ pub async fn webhook(
         _ => {}
     }
 
-    tx.commit().await.map_err(|_| AppError::Internal)?;
+    tx.commit().await.map_err(|e| AppError::Internal(format!("failed to commit webhook transaction: {e}")))?;
 
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -615,10 +615,10 @@ pub async fn cashout_request(
                 return Err(AppError::Conflict("cashout request failed".to_owned()));
             }
             Some(_) => {
-                return Err(AppError::Internal);
+                return Err(AppError::Internal("unexpected cashout status".to_owned()));
             }
             None => {
-                return Err(AppError::Internal);
+                return Err(AppError::Internal("cashout request not found after insert".to_owned()));
             }
         }
     }
@@ -993,7 +993,7 @@ fn app_error_message(err: &AppError) -> String {
         | AppError::Conflict(message)
         | AppError::TooManyRequests(message)
         | AppError::ServiceUnavailable(message) => message.clone(),
-        AppError::Internal => "internal server error".to_owned(),
+        AppError::Internal(_) => "internal server error".to_owned(),
     }
 }
 

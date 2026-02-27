@@ -77,7 +77,7 @@ fn source_ip_for_request(
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip())
-        .ok_or(AppError::Internal)?;
+        .ok_or(AppError::Internal("missing ConnectInfo extension for peer IP".to_owned()))?;
 
     if trusted_proxy_hops == 0 {
         return Ok(peer_ip);

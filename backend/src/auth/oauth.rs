@@ -138,7 +138,7 @@ pub async fn oauth_callback(
     }
 
     let exchange_code = Uuid::new_v4().simple().to_string();
-    let serialized_response = serde_json::to_string(&response).map_err(|_| AppError::Internal)?;
+    let serialized_response = serde_json::to_string(&response).map_err(|e| AppError::Internal(format!("failed to serialize oauth response: {e}")))?;
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let _: () = conn
         .set_ex(
@@ -188,7 +188,7 @@ pub async fn oauth_exchange(
     })?;
 
     let response = serde_json::from_str::<AuthResponse>(serialized_response.as_str())
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("failed to deserialize oauth exchange response: {e}")))?;
 
     Ok(Json(response))
 }
@@ -279,7 +279,7 @@ fn oauth_identity_from_telegram(
         .join("\n");
 
     let secret = Sha256::digest(bot_token.as_bytes());
-    let mut mac = HmacSha256::new_from_slice(secret.as_slice()).map_err(|_| AppError::Internal)?;
+    let mut mac = HmacSha256::new_from_slice(secret.as_slice()).map_err(|e| AppError::Internal(format!("HMAC key init failed: {e}")))?;
     mac.update(data_check_string.as_bytes());
     let expected = to_hex(&mac.finalize().into_bytes());
 
@@ -321,12 +321,12 @@ async fn fetch_google_identity(access_token: &str) -> AppResult<OauthIdentity> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|_| AppError::Internal)?
+        .map_err(|e| AppError::Internal(format!("google userinfo request failed: {e}")))?
         .error_for_status()
         .map_err(|_| AppError::Unauthorized("google oauth userinfo failed".to_owned()))?
         .json::<GoogleUser>()
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("failed to parse google userinfo response: {e}")))?;
 
     Ok(OauthIdentity {
         provider_id: user.sub,
@@ -349,12 +349,12 @@ async fn fetch_discord_identity(access_token: &str) -> AppResult<OauthIdentity> 
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|_| AppError::Internal)?
+        .map_err(|e| AppError::Internal(format!("discord userinfo request failed: {e}")))?
         .error_for_status()
         .map_err(|_| AppError::Unauthorized("discord oauth userinfo failed".to_owned()))?
         .json::<DiscordUser>()
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("failed to parse discord userinfo response: {e}")))?;
 
     let username = if user.discriminator == "0" {
         user.username
@@ -391,12 +391,12 @@ async fn fetch_github_identity(access_token: &str) -> AppResult<OauthIdentity> {
         .header("User-Agent", "othergirl-backend")
         .send()
         .await
-        .map_err(|_| AppError::Internal)?
+        .map_err(|e| AppError::Internal(format!("github userinfo request failed: {e}")))?
         .error_for_status()
         .map_err(|_| AppError::Unauthorized("github oauth userinfo failed".to_owned()))?
         .json::<GithubUser>()
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("failed to parse github userinfo response: {e}")))?;
 
     let mut email = user.email;
     if email.is_none() {
@@ -406,12 +406,12 @@ async fn fetch_github_identity(access_token: &str) -> AppResult<OauthIdentity> {
             .header("User-Agent", "othergirl-backend")
             .send()
             .await
-            .map_err(|_| AppError::Internal)?
+            .map_err(|e| AppError::Internal(format!("github emails request failed: {e}")))?
             .error_for_status()
             .map_err(|_| AppError::Unauthorized("github oauth emails failed".to_owned()))?
             .json::<Vec<GithubEmail>>()
             .await
-            .map_err(|_| AppError::Internal)?;
+            .map_err(|e| AppError::Internal(format!("failed to parse github emails response: {e}")))?;
 
         email = emails
             .into_iter()
@@ -540,10 +540,10 @@ fn oauth_client(state: &AppState, provider: &str) -> AppResult<BasicClient> {
     let client = BasicClient::new(
         ClientId::new(client_id),
         Some(ClientSecret::new(client_secret)),
-        AuthUrl::new(auth_url.to_owned()).map_err(|_| AppError::Internal)?,
-        Some(TokenUrl::new(token_url.to_owned()).map_err(|_| AppError::Internal)?),
+        AuthUrl::new(auth_url.to_owned()).map_err(|e| AppError::Internal(format!("invalid auth URL: {e}")))?,
+        Some(TokenUrl::new(token_url.to_owned()).map_err(|e| AppError::Internal(format!("invalid token URL: {e}")))?),
     )
-    .set_redirect_uri(RedirectUrl::new(redirect_url).map_err(|_| AppError::Internal)?);
+    .set_redirect_uri(RedirectUrl::new(redirect_url).map_err(|e| AppError::Internal(format!("invalid redirect URL: {e}")))?);
 
     Ok(client)
 }

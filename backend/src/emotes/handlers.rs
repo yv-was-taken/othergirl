@@ -219,7 +219,7 @@ pub async fn upload_emote(
 
     tokio::fs::create_dir_all(state.config.emote_upload_dir.as_str())
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("failed to create emote upload directory: {e}")))?;
 
     let filename = format!(
         "{}_{}.{}",
@@ -230,7 +230,7 @@ pub async fn upload_emote(
     let filepath = format!("{}/{}", state.config.emote_upload_dir, filename);
     tokio::fs::write(filepath.as_str(), &file_bytes)
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| AppError::Internal(format!("failed to write emote file: {e}")))?;
 
     let image_url = format!(
         "{}/{}",
