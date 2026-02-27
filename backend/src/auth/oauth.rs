@@ -125,8 +125,8 @@ pub async fn oauth_callback(
         token,
         user: SessionUser {
             id: user.id,
-            username: user.username.clone(),
-            email: user.email.clone(),
+            username: user.username,
+            email: user.email,
             is_premium: user.is_premium,
             is_age_verified: user.is_age_verified,
             created_at: user.created_at,
@@ -229,20 +229,20 @@ fn oauth_identity_from_telegram(
     let bot_token = state
         .config
         .telegram_bot_token
-        .clone()
+        .as_deref()
         .ok_or_else(|| AppError::ServiceUnavailable("telegram oauth is not configured".to_owned()))?;
 
     let hash = query
         .hash
-        .clone()
+        .as_deref()
         .ok_or_else(|| AppError::BadRequest("missing telegram hash".to_owned()))?;
     let auth_date = query
         .auth_date
-        .clone()
+        .as_deref()
         .ok_or_else(|| AppError::BadRequest("missing telegram auth_date".to_owned()))?;
     let id = query
         .id
-        .clone()
+        .as_deref()
         .ok_or_else(|| AppError::BadRequest("missing telegram id".to_owned()))?;
 
     let auth_date_int = auth_date
@@ -260,14 +260,14 @@ fn oauth_identity_from_telegram(
         ));
     }
 
-    let mut fields = vec![("auth_date", auth_date.clone()), ("id", id.clone())];
-    if let Some(first_name) = query.first_name.clone() {
+    let mut fields: Vec<(&str, &str)> = vec![("auth_date", auth_date), ("id", id)];
+    if let Some(first_name) = query.first_name.as_deref() {
         fields.push(("first_name", first_name));
     }
-    if let Some(last_name) = query.last_name.clone() {
+    if let Some(last_name) = query.last_name.as_deref() {
         fields.push(("last_name", last_name));
     }
-    if let Some(username) = query.username.clone() {
+    if let Some(username) = query.username.as_deref() {
         fields.push(("username", username));
     }
 
@@ -302,7 +302,7 @@ fn oauth_identity_from_telegram(
         .unwrap_or_else(|| format!("telegram_{id}"));
 
     Ok(OauthIdentity {
-        provider_id: id,
+        provider_id: id.to_owned(),
         username,
         email: None,
     })
@@ -561,7 +561,7 @@ fn build_telegram_auth_url(state: &AppState, oauth_state: &str) -> AppResult<Str
     let token = state
         .config
         .telegram_bot_token
-        .clone()
+        .as_deref()
         .ok_or_else(|| AppError::ServiceUnavailable("telegram oauth is not configured".to_owned()))?;
     let bot_id = token
         .split(':')
