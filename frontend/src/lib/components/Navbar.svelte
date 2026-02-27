@@ -30,7 +30,7 @@
 
     <!-- Desktop nav links -->
     <div class="hidden items-center gap-6 md:flex">
-      {#each links as link}
+      {#each links as link (link.href)}
         <a href={link.href} class="text-sm text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]">{link.label}</a>
       {/each}
     </div>
@@ -60,7 +60,7 @@
   <!-- Mobile dropdown menu -->
   {#if mobileMenuOpen}
     <div class="flex flex-col border-t border-[var(--border-default)] px-4 py-2 md:hidden">
-      {#each links as link}
+      {#each links as link (link.href)}
         <a
           href={link.href}
           class="py-2 text-sm text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
