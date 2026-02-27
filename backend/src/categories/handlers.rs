@@ -122,16 +122,7 @@ pub async fn list_languages(State(state): State<AppState>) -> AppResult<Json<Vec
 }
 
 fn slugify(value: &str) -> String {
-    value
-        .trim()
-        .to_ascii_lowercase()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
+    slug::slugify(value.trim())
 }
 
 async fn viewer_allows_nsfw(state: &AppState, headers: &HeaderMap) -> AppResult<bool> {
