@@ -123,7 +123,9 @@
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Flare Store</h1>
-    <span class="rounded-xl bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-secondary)]">{balance} sparks</span>
+    {#if $auth.user}
+      <span class="rounded-xl bg-[var(--bg-elevated)] px-3 py-1 text-sm text-[var(--text-secondary)]">{balance} sparks</span>
+    {/if}
   </div>
 
   <FlarePreview />
