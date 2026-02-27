@@ -96,7 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_awards_recipient ON awards(recipient_id, created_
 
 CREATE TABLE IF NOT EXISTS flare_items (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name         VARCHAR(64) NOT NULL,
+    name         VARCHAR(64) NOT NULL UNIQUE,
     description  TEXT NOT NULL DEFAULT '',
     item_type    VARCHAR(32) NOT NULL,
     price_sparks BIGINT NOT NULL,

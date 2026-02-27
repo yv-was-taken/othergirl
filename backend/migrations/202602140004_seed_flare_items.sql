@@ -4,4 +4,4 @@ VALUES
     ('Midnight Bubble', 'Dark bubble style', 'bubble_theme', 900, 'rare', '{"theme":"midnight"}'),
     ('Golden Border', 'Profile golden border', 'profile_border', 1500, 'rare', '{"border":"gold"}'),
     ('Founder Badge', 'Early supporter badge', 'badge', 2500, 'legendary', '{"badge":"founder"}')
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name) DO NOTHING;
