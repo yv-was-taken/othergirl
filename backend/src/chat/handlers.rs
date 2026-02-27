@@ -6,6 +6,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 use validator::Validate;
 
+use sqlx::PgPool;
+
 use crate::{
     auth::middleware::AuthUser,
     chat::{
@@ -31,18 +33,22 @@ pub struct ChatQuery {
     pub before: Option<Uuid>,
 }
 
-pub async fn list_chats(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-    Query(pagination): Query<Pagination>,
-) -> AppResult<Json<Vec<ChatSummary>>> {
-    pagination.validate()?;
-
-    let page = pagination.page.unwrap_or(1);
-    let per_page = pagination.per_page.unwrap_or(20);
+async fn fetch_chats(
+    db: &PgPool,
+    user_id: Uuid,
+    page: i64,
+    per_page: i64,
+    kept_only: bool,
+) -> AppResult<Vec<ChatSummary>> {
     let offset = (page - 1) * per_page;
 
-    let chats = sqlx::query_as::<_, ChatSummary>(
+    let kept_clause = if kept_only {
+        "AND c.is_kept = TRUE"
+    } else {
+        ""
+    };
+
+    let sql = format!(
         r#"
         SELECT
             c.id,
@@ -53,17 +59,34 @@ pub async fn list_chats(
         FROM chats c
         JOIN users u
             ON u.id = CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END
-        WHERE c.user_a_id = $1 OR c.user_b_id = $1
+        WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
+          {kept_clause}
         ORDER BY c.started_at DESC
         LIMIT $2 OFFSET $3
         "#,
-    )
-    .bind(auth_user.user_id)
-    .bind(per_page)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
+    );
 
+    let chats = sqlx::query_as::<_, ChatSummary>(&sql)
+        .bind(user_id)
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(db)
+        .await?;
+
+    Ok(chats)
+}
+
+pub async fn list_chats(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Query(pagination): Query<Pagination>,
+) -> AppResult<Json<Vec<ChatSummary>>> {
+    pagination.validate()?;
+
+    let page = pagination.page.unwrap_or(1);
+    let per_page = pagination.per_page.unwrap_or(20);
+
+    let chats = fetch_chats(&state.db, auth_user.user_id, page, per_page, false).await?;
     Ok(Json(chats))
 }
 
@@ -76,31 +99,8 @@ pub async fn list_kept_chats(
 
     let page = pagination.page.unwrap_or(1);
     let per_page = pagination.per_page.unwrap_or(20);
-    let offset = (page - 1) * per_page;
 
-    let chats = sqlx::query_as::<_, ChatSummary>(
-        r#"
-        SELECT
-            c.id,
-            CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS partner_id,
-            u.username AS partner_username,
-            c.started_at,
-            c.ended_at
-        FROM chats c
-        JOIN users u
-            ON u.id = CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END
-        WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
-          AND c.is_kept = TRUE
-        ORDER BY c.started_at DESC
-        LIMIT $2 OFFSET $3
-        "#,
-    )
-    .bind(auth_user.user_id)
-    .bind(per_page)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
-
+    let chats = fetch_chats(&state.db, auth_user.user_id, page, per_page, true).await?;
     Ok(Json(chats))
 }
 
