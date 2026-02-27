@@ -33,6 +33,8 @@
     onaward?: (detail: { award_type: string; spark_amount: number }) => void;
   } = $props();
 
+  const MAX_SPARK_AMOUNT = 10000;
+
   let draft = $state('');
   let sparkAmount = $state(100);
   let emotePickerOpen = $state(false);
@@ -75,6 +77,10 @@
 
   function sendAward() {
     if (!connected || sparkAmount <= 0) return;
+    if (sparkAmount > MAX_SPARK_AMOUNT) {
+      sparkAmount = MAX_SPARK_AMOUNT;
+      return;
+    }
 
     onaward?.({
       award_type: 'spark',
@@ -115,7 +121,7 @@
     <TypingIndicator isTyping={partnerTyping} />
 
     <div class="mt-2 flex items-center gap-2">
-      <input class="input max-w-36" type="number" min="1" bind:value={sparkAmount} disabled={!connected} />
+      <input class="input max-w-36" type="number" min="1" max={MAX_SPARK_AMOUNT} bind:value={sparkAmount} disabled={!connected} />
       <button class="btn-secondary" onclick={sendAward} disabled={!connected}>Send Award</button>
     </div>
 
