@@ -1,3 +1,6 @@
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
@@ -203,7 +206,10 @@ async fn is_flooding(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResul
     Ok(count > 10)
 }
 
+static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(https?://|www\.)\S+").unwrap()
+});
+
 fn contains_link(content: &str) -> bool {
-    let lower = content.to_ascii_lowercase();
-    lower.contains("http://") || lower.contains("https://") || lower.contains("www.")
+    URL_RE.is_match(content)
 }

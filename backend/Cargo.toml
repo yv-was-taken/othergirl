@@ -19,6 +19,7 @@ sha2 = "0.10"
 stripe = { package = "async-stripe", version = "0.39", default-features = false, features = ["runtime-tokio-hyper-rustls", "checkout", "connect", "webhook-events"] }
 jsonwebtoken = "9"
 rand = "0.9"
+regex = "1"
 redis = { version = "0.25", features = ["tokio-comp"] }
 slug = "0.1"
 serde = { version = "1", features = ["derive"] }
