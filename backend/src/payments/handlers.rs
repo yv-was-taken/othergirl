@@ -19,7 +19,7 @@ use crate::{
     AppState,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct SubscribeRequest {
     pub success_url: Option<String>,
     pub cancel_url: Option<String>,
