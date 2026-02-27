@@ -260,7 +260,7 @@ async fn handle_socket(
     };
 
     let mut last_queue_snapshot: Option<(String, usize)> = None;
-    let mut status_ticker = interval(Duration::from_millis(1200));
+    let mut status_ticker = interval(Duration::from_millis(5000));
     let mut left_explicitly = false;
 
     loop {
