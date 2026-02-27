@@ -38,8 +38,8 @@ pub async fn list_chats(
 ) -> AppResult<Json<Vec<ChatSummary>>> {
     pagination.validate()?;
 
-    let page = pagination.page.unwrap_or(1).max(1);
-    let per_page = pagination.per_page.unwrap_or(20).clamp(1, 100);
+    let page = pagination.page.unwrap_or(1);
+    let per_page = pagination.per_page.unwrap_or(20);
     let offset = (page - 1) * per_page;
 
     let chats = sqlx::query_as::<_, ChatSummary>(
@@ -74,8 +74,8 @@ pub async fn list_kept_chats(
 ) -> AppResult<Json<Vec<ChatSummary>>> {
     pagination.validate()?;
 
-    let page = pagination.page.unwrap_or(1).max(1);
-    let per_page = pagination.per_page.unwrap_or(20).clamp(1, 100);
+    let page = pagination.page.unwrap_or(1);
+    let per_page = pagination.per_page.unwrap_or(20);
     let offset = (page - 1) * per_page;
 
     let chats = sqlx::query_as::<_, ChatSummary>(
@@ -112,7 +112,7 @@ pub async fn get_chat(
 ) -> AppResult<Json<ChatDetails>> {
     query.validate()?;
 
-    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let limit = query.limit.unwrap_or(50);
 
     let chat = sqlx::query_as::<
         _,
