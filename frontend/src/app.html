@@ -8,11 +8,10 @@
     <link rel="apple-touch-icon" href="/favicon-192.png" />
     <script>
       (function() {
-        var t = localStorage.getItem('othergirl.theme');
-        if (t !== 'light' && t !== 'dark') {
-          t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        }
-        document.documentElement.setAttribute('data-theme', t);
+        try {
+          var theme = localStorage.getItem('othergirl.theme') || 'dark';
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch(e) {}
       })();
     </script>
     %sveltekit.head%
