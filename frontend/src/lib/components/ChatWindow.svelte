@@ -108,7 +108,7 @@
       <div class="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-center text-sm text-red-300">
         {connectionError}
       </div>
-    {:else if messages.length === 0}
+    {:else if messages.length === 0 && !partnerTyping}
       <p class="text-sm text-[var(--text-muted)]">No messages yet. Say hi.</p>
     {/if}
 
