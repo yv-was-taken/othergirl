@@ -2,15 +2,12 @@ import { browser } from '$app/environment';
 import { writable } from 'svelte/store';
 
 import { setAuthToken } from '$lib/api';
+import type { UserResponse } from '$lib/types';
 
-export type SessionUser = {
-  id: string;
-  username: string;
-  email?: string | null;
-  is_premium: boolean;
-  is_age_verified: boolean;
-  created_at: string;
-};
+export type SessionUser = Pick<
+  UserResponse,
+  'id' | 'username' | 'email' | 'is_premium' | 'is_age_verified' | 'created_at'
+>;
 
 type AuthState = {
   token: string | null;
