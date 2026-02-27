@@ -1,4 +1,6 @@
-const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
+import { API_BASE_URL } from '$lib/config';
+
+const API_BASE = API_BASE_URL;
 let authToken: string | null = null;
 
 export function setAuthToken(token: string | null) {
