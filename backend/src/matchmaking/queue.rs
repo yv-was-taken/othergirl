@@ -537,7 +537,7 @@ async fn cooldown_ttl(
 }
 
 fn estimate_wait(position: usize) -> u64 {
-    ((position as u64).saturating_sub(1) * 4).max(4)
+    (position as u64).saturating_sub(1) * 4
 }
 
 fn active_chat_key(user_id: Uuid) -> String {
