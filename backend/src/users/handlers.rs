@@ -27,18 +27,7 @@ pub async fn get_me(
 
     let interests = load_interests(&state, auth_user.user_id).await?;
 
-    Ok(Json(serde_json::json!({
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "bio": user.bio,
-        "is_premium": user.is_premium,
-        "is_age_verified": user.is_age_verified,
-        "keep_count": user.keep_count,
-        "reputation_score": user.reputation_score,
-        "created_at": user.created_at,
-        "interest_category_ids": interests
-    })))
+    Ok(Json(user_response(&user, interests)))
 }
 
 pub async fn update_me(
@@ -95,18 +84,7 @@ pub async fn update_me(
 
     let interests = load_interests(&state, auth_user.user_id).await?;
 
-    Ok(Json(serde_json::json!({
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "bio": user.bio,
-        "is_premium": user.is_premium,
-        "is_age_verified": user.is_age_verified,
-        "keep_count": user.keep_count,
-        "reputation_score": user.reputation_score,
-        "created_at": user.created_at,
-        "interest_category_ids": interests
-    })))
+    Ok(Json(user_response(&user, interests)))
 }
 
 pub async fn get_my_flare(
@@ -209,6 +187,21 @@ pub async fn update_my_flare(
     Ok(Json(serde_json::json!({
         "equipped": desired
     })))
+}
+
+fn user_response(user: &UserProfile, interests: Vec<Uuid>) -> serde_json::Value {
+    serde_json::json!({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "bio": user.bio,
+        "is_premium": user.is_premium,
+        "is_age_verified": user.is_age_verified,
+        "keep_count": user.keep_count,
+        "reputation_score": user.reputation_score,
+        "created_at": user.created_at,
+        "interest_category_ids": interests
+    })
 }
 
 async fn load_interests(state: &AppState, user_id: Uuid) -> AppResult<Vec<Uuid>> {
