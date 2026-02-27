@@ -4,6 +4,7 @@
 
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
+  import type { UserResponse } from '$lib/types';
 
   let balance = $state(0);
   let transactions: { id: string; amount: number; transaction_type: string; created_at: string }[] = $state([]);
@@ -26,14 +27,7 @@
 
     try {
       const [meRes, balanceRes, txRes, cashoutRes, blocksRes, bundlesRes] = await Promise.all([
-        apiFetch<{
-          id: string;
-          username: string;
-          email?: string | null;
-          is_premium: boolean;
-          is_age_verified: boolean;
-          created_at: string;
-        }>('/api/users/me'),
+        apiFetch<UserResponse>('/api/users/me'),
         apiFetch<{ balance: number }>('/api/sparks/balance'),
         apiFetch<{ transactions: { id: string; amount: number; transaction_type: string; created_at: string }[] }>('/api/sparks/transactions'),
         apiFetch<{ connect: { stripe_account_id: string; payouts_enabled: boolean } | null }>('/api/cashout/status'),

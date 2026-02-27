@@ -4,6 +4,7 @@
 
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
+  import type { UserResponse } from '$lib/types';
 
   type Category = { id: string; name: string };
 
@@ -20,16 +21,7 @@
     loading = true;
     try {
       const [profile, categoryList] = await Promise.all([
-        apiFetch<{
-          id: string;
-          username: string;
-          email?: string;
-          bio: string;
-          is_premium: boolean;
-          is_age_verified: boolean;
-          created_at: string;
-          interest_category_ids: string[];
-        }>('/api/users/me'),
+        apiFetch<UserResponse>('/api/users/me'),
         apiFetch<Category[]>('/api/categories')
       ]);
 
@@ -57,15 +49,7 @@
 
     loading = true;
     try {
-      const profile = await apiFetch<{
-        id: string;
-        username: string;
-        email?: string;
-        bio: string;
-        is_premium: boolean;
-        is_age_verified: boolean;
-        created_at: string;
-      }>('/api/users/me', {
+      const profile = await apiFetch<UserResponse>('/api/users/me', {
         method: 'PUT',
         body: JSON.stringify({
           bio,

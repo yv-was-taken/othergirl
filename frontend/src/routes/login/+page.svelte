@@ -6,6 +6,7 @@
 
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
+  import type { AuthResponse } from '$lib/types';
 
   let mode: 'login' | 'register' = $state('login');
 
@@ -41,17 +42,7 @@
 
     loading = true;
     try {
-      const response = await apiFetch<{
-        token: string;
-        user: {
-          id: string;
-          username: string;
-          email?: string;
-          is_premium: boolean;
-          is_age_verified: boolean;
-          created_at: string;
-        };
-      }>('/api/auth/oauth/exchange', {
+      const response = await apiFetch<AuthResponse>('/api/auth/oauth/exchange', {
         method: 'POST',
         body: JSON.stringify({ code: oauthCode })
       });
@@ -73,17 +64,7 @@
 
     try {
       if (mode === 'login') {
-        const response = await apiFetch<{
-          token: string;
-          user: {
-            id: string;
-            username: string;
-            email?: string;
-            is_premium: boolean;
-            is_age_verified: boolean;
-            created_at: string;
-          };
-        }>('/api/auth/login', {
+        const response = await apiFetch<AuthResponse>('/api/auth/login', {
           method: 'POST',
           body: JSON.stringify({ email, password })
         });
@@ -92,17 +73,7 @@
         toast.success('Logged in');
         await goto(getPostAuthRedirectPath(), { replaceState: true });
       } else {
-        const response = await apiFetch<{
-          token: string;
-          user: {
-            id: string;
-            username: string;
-            email?: string;
-            is_premium: boolean;
-            is_age_verified: boolean;
-            created_at: string;
-          };
-        }>('/api/auth/register', {
+        const response = await apiFetch<AuthResponse>('/api/auth/register', {
           method: 'POST',
           body: JSON.stringify({ username, email, password, is_age_verified: isAgeVerified })
         });
