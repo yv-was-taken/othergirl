@@ -681,18 +681,5 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn url_encode(value: &str) -> String {
-    value
-        .bytes()
-        .flat_map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                vec![byte as char]
-            }
-            _ => {
-                let mut encoded = String::with_capacity(3);
-                encoded.push('%');
-                encoded.push_str(&format!("{:02X}", byte));
-                encoded.chars().collect::<Vec<_>>()
-            }
-        })
-        .collect()
+    urlencoding::encode(value).into_owned()
 }
