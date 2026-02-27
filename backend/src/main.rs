@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = AppConfig::from_env();
-    let db = db::connect(&config.database_url).await?;
+    let db = db::connect(&config.database_url, config.db_max_connections).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
     let redis = redis_client::connect(&config.redis_url)?;

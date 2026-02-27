@@ -41,6 +41,7 @@ pub struct AppConfig {
     pub emote_upload_dir: String,
     pub emote_public_base_url: String,
     pub admin_user_ids: Vec<Uuid>,
+    pub db_max_connections: u32,
 }
 
 impl AppConfig {
@@ -102,6 +103,7 @@ impl AppConfig {
             emote_public_base_url: env::var("EMOTE_PUBLIC_BASE_URL")
                 .unwrap_or_else(|_| format!("{public_api_base_url}/assets/emotes")),
             admin_user_ids: parse_admin_user_ids(),
+            db_max_connections: env_u32("DB_MAX_CONNECTIONS", 20),
         }
     }
 }
@@ -129,6 +131,13 @@ fn jwt_secret_from_env() -> String {
 
 fn optional_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn env_u32(key: &str, default: u32) -> u32 {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(default)
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
