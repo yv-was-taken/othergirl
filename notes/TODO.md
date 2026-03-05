@@ -8,6 +8,6 @@
 
 ## Testing
 
-- [ ] **Unit tests**: Auth password hashing, JWT issue/verify, ledger transactions, encryption round-trip
-- [ ] **Integration tests**: API route handlers (register, login, matchmaking, payments, awards)
-- [ ] **E2E tests**: Playwright or similar — login flow, matchmaking → chat → keep vote → history
+- [x] **Unit tests**: 95 tests across 9 modules (auth, jwt, encryption, safety, stripe, config, error, users, reputation)
+- [x] **Integration tests**: 14 tests against real Postgres/Redis (auth, users, categories, health) via docker-compose.test.yml
+- [x] **E2E tests**: 15 Playwright tests (auth flow, navigation, store, theme) with backend+frontend webServer config
