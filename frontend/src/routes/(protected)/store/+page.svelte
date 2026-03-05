@@ -122,6 +122,8 @@
   }
 </script>
 
+<svelte:head><title>Store - othergirl</title></svelte:head>
+
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Flare Store</h1>

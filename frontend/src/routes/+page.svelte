@@ -1,3 +1,5 @@
+<svelte:head><title>othergirl - Anonymous Chat</title></svelte:head>
+
 <section class="py-12">
   <div class="space-y-5">
     <img src="/assets/othergirl-logo-transparent.png" alt="Othergirl" />

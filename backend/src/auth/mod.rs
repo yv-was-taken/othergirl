@@ -15,6 +15,7 @@ pub fn routes() -> Router<AppState> {
         .route("/logout", post(handlers::logout))
         .route("/refresh", post(handlers::refresh))
         .route("/oauth/exchange", post(oauth::oauth_exchange))
+        .route("/change-password", post(handlers::change_password))
         .route("/oauth/{provider}", get(oauth::oauth_start))
         .route("/oauth/{provider}/callback", get(oauth::oauth_callback))
 }

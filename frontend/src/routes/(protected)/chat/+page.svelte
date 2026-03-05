@@ -365,6 +365,8 @@
   }
 </script>
 
+<svelte:head><title>Chat - othergirl</title></svelte:head>
+
 {#if !$auth.user}
   <div class="surface p-6 text-center">
     <p class="text-[var(--text-secondary)]">You need an account to start chatting.</p>

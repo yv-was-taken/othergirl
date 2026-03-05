@@ -13,6 +13,8 @@ export type UserResponse = {
   is_age_verified: boolean;
   created_at: string;
   interest_category_ids?: string[];
+  deleted_at?: string | null;
+  deletion_scheduled_at?: string | null;
 };
 
 /** Response from login, register, and OAuth exchange endpoints. */

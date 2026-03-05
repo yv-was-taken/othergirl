@@ -15,6 +15,8 @@ pub struct UserProfile {
     pub keep_count: i32,
     pub reputation_score: f64,
     pub created_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deletion_scheduled_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize, Validate)]

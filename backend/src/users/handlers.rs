@@ -4,8 +4,11 @@ use axum::{extract::State, Json};
 use uuid::Uuid;
 use validator::Validate;
 
+use serde::Deserialize;
+
 use crate::{
     auth::middleware::AuthUser,
+    auth::password::verify_password,
     error::{AppError, AppResult},
     users::models::{UpdateFlareRequest, UpdateProfileRequest, UserProfile},
     AppState,
@@ -17,7 +20,7 @@ pub async fn get_me(
 ) -> AppResult<Json<serde_json::Value>> {
     let user = sqlx::query_as::<_, UserProfile>(
         r#"
-        SELECT id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at
+        SELECT id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at, deleted_at, deletion_scheduled_at
         FROM users
         WHERE id = $1
         "#,
@@ -48,7 +51,7 @@ pub async fn update_me(
             bio = COALESCE($2, bio),
             updated_at = NOW()
         WHERE id = $1
-        RETURNING id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at
+        RETURNING id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at, deleted_at, deletion_scheduled_at
         "#,
     )
     .bind(auth_user.user_id)
@@ -223,8 +226,74 @@ fn user_response(user: &UserProfile, interests: Vec<Uuid>) -> serde_json::Value 
         "keep_count": user.keep_count,
         "reputation_score": user.reputation_score,
         "created_at": user.created_at,
+        "deleted_at": user.deleted_at,
+        "deletion_scheduled_at": user.deletion_scheduled_at,
         "interest_category_ids": interests
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    pub password: String,
+}
+
+pub async fn delete_me(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Json(payload): Json<DeleteAccountRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let row = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT password_hash FROM users WHERE id = $1",
+    )
+    .bind(auth_user.user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
+
+    let hash = row
+        .0
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "account uses OAuth login; contact support to delete".to_owned(),
+            )
+        })?;
+
+    if !verify_password(&hash, &payload.password)? {
+        return Err(AppError::Unauthorized("incorrect password".to_owned()));
+    }
+
+    sqlx::query(
+        "UPDATE users SET deleted_at = NOW(), deletion_scheduled_at = NOW() + INTERVAL '30 days', updated_at = NOW() WHERE id = $1",
+    )
+    .bind(auth_user.user_id)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "account scheduled for deletion in 30 days"
+    })))
+}
+
+pub async fn cancel_deletion(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    let result = sqlx::query(
+        "UPDATE users SET deleted_at = NULL, deletion_scheduled_at = NULL, updated_at = NOW() WHERE id = $1 AND deleted_at IS NOT NULL",
+    )
+    .bind(auth_user.user_id)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::BadRequest(
+            "account is not scheduled for deletion".to_owned(),
+        ));
+    }
+
+    Ok(Json(serde_json::json!({
+        "message": "account deletion cancelled"
+    })))
 }
 
 #[cfg(test)]
@@ -243,6 +312,8 @@ mod tests {
             keep_count: 5,
             reputation_score: 0.95,
             created_at: Utc::now(),
+            deleted_at: None,
+            deletion_scheduled_at: None,
         }
     }
 

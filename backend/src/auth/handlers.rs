@@ -218,3 +218,44 @@ pub async fn logout(
 
     Ok(Json(serde_json::json!({ "message": "logged out" })))
 }
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ChangePasswordRequest {
+    #[validate(length(min = 1))]
+    pub current_password: String,
+    #[validate(length(min = 8, max = 128))]
+    pub new_password: String,
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Json(payload): Json<ChangePasswordRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    payload.validate()?;
+
+    let row = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT password_hash FROM users WHERE id = $1",
+    )
+    .bind(auth_user.user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
+
+    let current_hash = row.0
+        .ok_or_else(|| AppError::BadRequest("account uses OAuth login, no password to change".to_owned()))?;
+
+    if !verify_password(&current_hash, &payload.current_password)? {
+        return Err(AppError::Unauthorized("current password is incorrect".to_owned()));
+    }
+
+    let new_hash = hash_password(&payload.new_password)?;
+
+    sqlx::query("UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&new_hash)
+        .bind(auth_user.user_id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Json(serde_json::json!({ "message": "password changed" })))
+}

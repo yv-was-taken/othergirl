@@ -85,6 +85,8 @@
   }
 </script>
 
+<svelte:head><title>Profile - othergirl</title></svelte:head>
+
 <section class="mx-auto max-w-3xl space-y-4">
   <h1 class="text-2xl font-bold">Profile</h1>
 

@@ -109,6 +109,13 @@ body {
   border: 1px solid var(--border-default);
   background: var(--bg-surface);
   backdrop-filter: blur(12px);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+a.surface:hover,
+button.surface:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-glow);
 }
 
 @utility btn {
@@ -119,18 +126,26 @@ body {
   @apply btn disabled:opacity-50 disabled:cursor-not-allowed;
   background: var(--btn-primary-bg);
   color: var(--btn-primary-text);
+  transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 .btn-primary:hover {
   background: var(--btn-primary-hover);
+}
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .btn-secondary {
   @apply btn disabled:opacity-50 disabled:cursor-not-allowed;
   background: var(--btn-secondary-bg);
   color: var(--btn-secondary-text);
+  transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 .btn-secondary:hover {
   background: var(--btn-secondary-hover);
+}
+.btn-secondary:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .input {
