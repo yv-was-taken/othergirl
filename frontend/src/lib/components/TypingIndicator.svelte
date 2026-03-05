@@ -1,15 +1,22 @@
 <script lang="ts">
-  let { isTyping = false }: { isTyping?: boolean } = $props();
+  let { isTyping = false, typingUpdatedAt = null }: {
+    isTyping?: boolean;
+    typingUpdatedAt?: number | null;
+  } = $props();
 
   let visible = $state(false);
   let timeout: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
     if (isTyping) {
+      // Keep this effect subscribed to typing heartbeat updates so continuous typing
+      // extends the auto-hide timeout even when `isTyping` stays true.
+      typingUpdatedAt;
       visible = true;
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => {
         visible = false;
+        timeout = null;
       }, 3000);
     } else {
       visible = false;

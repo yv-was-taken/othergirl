@@ -224,7 +224,10 @@ where
         request = request.header("Idempotency-Key", idempotency_key);
     }
 
-    let response = request.send().await.map_err(|e| AppError::Internal(format!("stripe POST request failed: {e}")))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(format!("stripe POST request failed: {e}")))?;
 
     parse_response::<T>(response).await
 }
@@ -234,13 +237,17 @@ where
     T: serde::de::DeserializeOwned,
 {
     let status = response.status();
-    let body = response.text().await.map_err(|e| AppError::Internal(format!("failed to read stripe response body: {e}")))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to read stripe response body: {e}")))?;
 
     if !status.is_success() {
         return Err(map_stripe_error(status, body.as_str()));
     }
 
-    serde_json::from_str::<T>(body.as_str()).map_err(|e| AppError::Internal(format!("failed to parse stripe response: {e}")))
+    serde_json::from_str::<T>(body.as_str())
+        .map_err(|e| AppError::Internal(format!("failed to parse stripe response: {e}")))
 }
 
 fn map_stripe_error(status: StatusCode, body: &str) -> AppError {
@@ -349,7 +356,9 @@ mod tests {
         let payload = b"test payload";
         let secret = "whsec_test_secret";
         let timestamp = Utc::now().timestamp();
-        let header = format!("t={timestamp},v1=0000000000000000000000000000000000000000000000000000000000000000");
+        let header = format!(
+            "t={timestamp},v1=0000000000000000000000000000000000000000000000000000000000000000"
+        );
 
         let result = verify_webhook_signature(payload, &header, secret);
         assert!(result.is_err());

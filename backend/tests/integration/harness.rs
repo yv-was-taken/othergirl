@@ -7,11 +7,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use othergirl_backend::{
-    auth::jwt::JwtSettings,
-    build_app,
-    chat::websocket::ChatHub,
-    config::AppConfig,
-    AppState,
+    auth::jwt::JwtSettings, build_app, chat::websocket::ChatHub, config::AppConfig, AppState,
 };
 
 /// A running test server with an HTTP client pointed at it.
@@ -144,8 +140,8 @@ pub async fn spawn_app() -> TestApp {
         .expect("failed to run migrations");
 
     // Connect to Redis
-    let redis =
-        othergirl_backend::redis_client::connect(redis_url).expect("failed to connect to test redis");
+    let redis = othergirl_backend::redis_client::connect(redis_url)
+        .expect("failed to connect to test redis");
 
     // Generate a random 32-byte encryption key
     let mut key_bytes = [0u8; 32];
@@ -240,10 +236,7 @@ pub async fn spawn_app() -> TestApp {
         .get_multiplexed_tokio_connection()
         .await
         .unwrap();
-    let _: () = redis::cmd("FLUSHDB")
-        .query_async(&mut conn)
-        .await
-        .unwrap();
+    let _: () = redis::cmd("FLUSHDB").query_async(&mut conn).await.unwrap();
 
     test_app
 }

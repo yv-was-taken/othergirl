@@ -40,7 +40,11 @@ pub async fn middleware(
 
     let key = format!("rate_limit:{bucket}:{source}");
 
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let count: i64 = conn.incr(&key, 1_i64).await?;
 
     if count == 1 {
@@ -77,7 +81,9 @@ fn source_ip_for_request(
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip())
-        .ok_or(AppError::Internal("missing ConnectInfo extension for peer IP".to_owned()))?;
+        .ok_or(AppError::Internal(
+            "missing ConnectInfo extension for peer IP".to_owned(),
+        ))?;
 
     if trusted_proxy_hops == 0 {
         return Ok(peer_ip);

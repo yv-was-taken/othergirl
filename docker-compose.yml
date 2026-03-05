@@ -23,7 +23,8 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/othergirl
       REDIS_URL: redis://redis:6379
       JWT_SECRET: change-me-to-a-real-secret-for-production-use-only
-      CHAT_KEY_ENCRYPTION_KEY_B64: ${CHAT_KEY_ENCRYPTION_KEY_B64:-}
+      # Local-dev fallback key (32 bytes, base64). Override in real environments.
+      CHAT_KEY_ENCRYPTION_KEY_B64: ${CHAT_KEY_ENCRYPTION_KEY_B64:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
       CORS_ORIGIN: http://localhost:5173
     depends_on:
       - postgres

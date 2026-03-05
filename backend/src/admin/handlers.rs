@@ -66,7 +66,17 @@ pub async fn list_users(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * per_page;
 
-    let users = sqlx::query_as::<_, (Uuid, String, Option<String>, bool, bool, chrono::DateTime<chrono::Utc>)>(
+    let users = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            bool,
+            bool,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, username, email, is_premium, is_suspended, created_at
         FROM users
@@ -81,16 +91,18 @@ pub async fn list_users(
 
     let items: Vec<serde_json::Value> = users
         .into_iter()
-        .map(|(id, username, email, is_premium, is_suspended, created_at)| {
-            serde_json::json!({
-                "id": id,
-                "username": username,
-                "email": email,
-                "is_premium": is_premium,
-                "is_suspended": is_suspended,
-                "created_at": created_at,
-            })
-        })
+        .map(
+            |(id, username, email, is_premium, is_suspended, created_at)| {
+                serde_json::json!({
+                    "id": id,
+                    "username": username,
+                    "email": email,
+                    "is_premium": is_premium,
+                    "is_suspended": is_suspended,
+                    "created_at": created_at,
+                })
+            },
+        )
         .collect();
 
     Ok(Json(serde_json::json!({
@@ -113,12 +125,11 @@ pub async fn suspend_user(
         ));
     }
 
-    let result = sqlx::query(
-        "UPDATE users SET is_suspended = TRUE, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("UPDATE users SET is_suspended = TRUE, updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("user not found".to_owned()));
@@ -137,12 +148,11 @@ pub async fn unsuspend_user(
 ) -> AppResult<Json<serde_json::Value>> {
     require_admin(&state, &auth_user)?;
 
-    let result = sqlx::query(
-        "UPDATE users SET is_suspended = FALSE, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("UPDATE users SET is_suspended = FALSE, updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("user not found".to_owned()));

@@ -25,6 +25,7 @@ type ChatState = {
   queuePosition: number | null;
   queueWaitSeconds: number | null;
   partnerTyping: boolean;
+  partnerTypingUpdatedAt: number | null;
   cooldownSeconds: number;
 };
 
@@ -37,6 +38,7 @@ function makeInitial(): ChatState {
     queuePosition: null,
     queueWaitSeconds: null,
     partnerTyping: false,
+    partnerTypingUpdatedAt: null,
     cooldownSeconds: 0
   };
 }
@@ -72,6 +74,7 @@ export function setMatch(
     queueWaitSeconds: null,
     messages: [],
     partnerTyping: false,
+    partnerTypingUpdatedAt: null,
     cooldownSeconds: 0
   }));
 }
@@ -89,7 +92,11 @@ export function pushMessage(message: ChatMessage) {
 }
 
 export function setPartnerTyping(isTyping: boolean) {
-  chat.update((state) => ({ ...state, partnerTyping: isTyping }));
+  chat.update((state) => ({
+    ...state,
+    partnerTyping: isTyping,
+    partnerTypingUpdatedAt: isTyping ? Date.now() : null
+  }));
 }
 
 export function markMessageRead(messageId: string) {

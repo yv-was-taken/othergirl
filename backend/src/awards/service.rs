@@ -27,9 +27,7 @@ pub async fn send_award_internal(
     spark_amount: i64,
 ) -> AppResult<AwardOutcome> {
     if !VALID_AWARD_TYPES.contains(&award_type.as_str()) {
-        return Err(AppError::BadRequest(
-            "invalid award type".to_owned(),
-        ));
+        return Err(AppError::BadRequest("invalid award type".to_owned()));
     }
 
     if spark_amount <= 0 {

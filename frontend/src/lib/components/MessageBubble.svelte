@@ -7,22 +7,23 @@
 
   dayjs.extend(relativeTime);
 
-  let { message, mine = false }: {
+  let { message, mine = false, nowMs = Date.now() }: {
     message: {
       content: string;
       sender_id: string;
       timestamp: string;
       flagged?: boolean;
-      status?: 'sent' | 'read';
+      is_read?: boolean;
     };
     mine?: boolean;
+    nowMs?: number;
   } = $props();
 
   const rendered = $derived(renderMarkdown(applyEmotes(message.content)));
 
   const relativeTimestamp = $derived.by(() => {
     const ts = dayjs(message.timestamp);
-    const now = dayjs();
+    const now = dayjs(nowMs);
     const diffSec = now.diff(ts, 'second');
     const diffMin = now.diff(ts, 'minute');
     const diffHour = now.diff(ts, 'hour');
@@ -41,7 +42,7 @@
   <div class={`mt-1 flex items-center gap-1 text-[11px] ${mine ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-muted)]'}`}>
     <span title={absoluteTimestamp}>{relativeTimestamp}</span>
     {#if mine}
-      {#if message.status === 'read'}
+      {#if message.is_read}
         <CheckCheck size={14} />
       {:else}
         <Check size={14} />

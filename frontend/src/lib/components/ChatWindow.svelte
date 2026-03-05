@@ -10,6 +10,7 @@
     messages = [],
     currentUserId = null,
     partnerTyping = false,
+    partnerTypingUpdatedAt = null,
     connected = false,
     connectionError = '',
     partnerName = 'stranger',
@@ -22,9 +23,10 @@
     onkeepvote,
     onaward
   }: {
-    messages?: { id: string; sender_id: string; content: string; timestamp: string; flagged?: boolean; status?: 'sent' | 'read' }[];
+    messages?: { id: string; sender_id: string; content: string; timestamp: string; flagged?: boolean; is_read?: boolean }[];
     currentUserId?: string | null;
     partnerTyping?: boolean;
+    partnerTypingUpdatedAt?: number | null;
     connected?: boolean;
     connectionError?: string;
     partnerName?: string;
@@ -46,6 +48,14 @@
   let inputEl: HTMLInputElement | undefined = $state();
   let emoteBtn: HTMLButtonElement | undefined = $state();
   let messagesEl: HTMLDivElement | undefined = $state();
+  let nowMs = $state(Date.now());
+
+  $effect(() => {
+    const interval = setInterval(() => {
+      nowMs = Date.now();
+    }, 15000);
+    return () => clearInterval(interval);
+  });
 
   $effect(() => {
     // Subscribe to messages array changes
@@ -127,12 +137,12 @@
     {/if}
 
     {#each messages as message (message.id)}
-      <MessageBubble {message} mine={message.sender_id === currentUserId} />
+      <MessageBubble {message} mine={message.sender_id === currentUserId} {nowMs} />
     {/each}
   </div>
 
   <div class="border-t border-[var(--border-default)] px-4 py-3">
-    <TypingIndicator isTyping={partnerTyping} />
+    <TypingIndicator isTyping={partnerTyping} typingUpdatedAt={partnerTypingUpdatedAt} />
 
     <div class="mt-2 flex items-center gap-2">
       <input class="input max-w-36" type="number" min="1" max={MAX_SPARK_AMOUNT} bind:value={sparkAmount} disabled={!connected} />

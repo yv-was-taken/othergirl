@@ -11,8 +11,13 @@ lazy_static! {
     )
     .expect("metric can be created");
     pub static ref HTTP_REQUEST_DURATION_SECONDS: HistogramVec = HistogramVec::new(
-        HistogramOpts::new("http_request_duration_seconds", "HTTP request duration in seconds")
-            .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+        HistogramOpts::new(
+            "http_request_duration_seconds",
+            "HTTP request duration in seconds"
+        )
+        .buckets(vec![
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+        ]),
         &["method", "path"],
     )
     .expect("metric can be created");
@@ -21,11 +26,9 @@ lazy_static! {
         "Number of active WebSocket connections",
     )
     .expect("metric can be created");
-    pub static ref REGISTERED_USERS_TOTAL: IntGauge = IntGauge::new(
-        "registered_users_total",
-        "Total number of registered users",
-    )
-    .expect("metric can be created");
+    pub static ref REGISTERED_USERS_TOTAL: IntGauge =
+        IntGauge::new("registered_users_total", "Total number of registered users",)
+            .expect("metric can be created");
 }
 
 pub fn init_metrics() {

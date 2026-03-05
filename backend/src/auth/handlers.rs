@@ -62,6 +62,7 @@ struct UserAuthRow {
     is_premium: bool,
     is_age_verified: bool,
     is_suspended: bool,
+    deletion_due: bool,
     created_at: DateTime<Utc>,
 }
 
@@ -77,7 +78,7 @@ pub async fn register(
         r#"
         INSERT INTO users (username, email, password_hash, is_age_verified)
         VALUES ($1, $2, $3, FALSE)
-        RETURNING id, username, email, password_hash, is_premium, is_age_verified, is_suspended, created_at
+        RETURNING id, username, email, password_hash, is_premium, is_age_verified, is_suspended, FALSE AS deletion_due, created_at
         "#,
     )
     .bind(payload.username)
@@ -89,9 +90,7 @@ pub async fn register(
     let user = match insert {
         Ok(row) => row,
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            return Err(AppError::Conflict(
-                "registration failed".to_owned(),
-            ))
+            return Err(AppError::Conflict("registration failed".to_owned()))
         }
         Err(err) => return Err(err.into()),
     };
@@ -126,7 +125,7 @@ pub async fn login(
 
     let maybe_user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, username, email, password_hash, is_premium, is_age_verified, is_suspended, created_at
+        SELECT id, username, email, password_hash, is_premium, is_age_verified, is_suspended, COALESCE(deletion_scheduled_at <= NOW(), FALSE) AS deletion_due, created_at
         FROM users
         WHERE email = $1
         "#,
@@ -159,6 +158,12 @@ pub async fn login(
         return Err(AppError::Forbidden("account suspended".to_owned()));
     }
 
+    if user.deletion_due {
+        return Err(AppError::Forbidden(
+            "account deletion deadline reached".to_owned(),
+        ));
+    }
+
     if user.password_hash.is_none() || !password_valid {
         return Err(AppError::Unauthorized(
             "invalid email or password".to_owned(),
@@ -184,13 +189,11 @@ pub async fn refresh(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    let is_suspended: bool = sqlx::query_scalar(
-        "SELECT is_suspended FROM users WHERE id = $1",
-    )
-    .bind(auth_user.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("user not found".to_owned()))?;
+    let is_suspended: bool = sqlx::query_scalar("SELECT is_suspended FROM users WHERE id = $1")
+        .bind(auth_user.user_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("user not found".to_owned()))?;
 
     if is_suspended {
         return Err(AppError::Forbidden("account suspended".to_owned()));
@@ -236,19 +239,21 @@ pub async fn change_password(
 ) -> AppResult<Json<serde_json::Value>> {
     payload.validate()?;
 
-    let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT password_hash FROM users WHERE id = $1",
-    )
-    .bind(auth_user.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
+    let row =
+        sqlx::query_as::<_, (Option<String>,)>("SELECT password_hash FROM users WHERE id = $1")
+            .bind(auth_user.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
 
-    let current_hash = row.0
-        .ok_or_else(|| AppError::BadRequest("account uses OAuth login, no password to change".to_owned()))?;
+    let current_hash = row.0.ok_or_else(|| {
+        AppError::BadRequest("account uses OAuth login, no password to change".to_owned())
+    })?;
 
     if !verify_password(&current_hash, &payload.current_password)? {
-        return Err(AppError::Unauthorized("current password is incorrect".to_owned()));
+        return Err(AppError::Unauthorized(
+            "current password is incorrect".to_owned(),
+        ));
     }
 
     let new_hash = hash_password(&payload.new_password)?;

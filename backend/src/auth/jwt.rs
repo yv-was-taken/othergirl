@@ -74,21 +74,26 @@ pub async fn revoke_token(
     }
 
     let key = revocation_key(&claims.jti);
-    let mut conn = redis.get().await.map_err(|e| {
-        crate::error::AppError::Internal(format!("redis pool error: {e}"))
-    })?;
+    let mut conn = redis
+        .get()
+        .await
+        .map_err(|e| crate::error::AppError::Internal(format!("redis pool error: {e}")))?;
     conn.set_ex::<_, _, ()>(&key, 1u8, remaining as u64).await?;
 
     Ok(())
 }
 
 /// Check whether a token has been revoked by its jti.
-pub async fn is_token_revoked(jti: &str, redis: &crate::redis_client::RedisPool) -> AppResult<bool> {
+pub async fn is_token_revoked(
+    jti: &str,
+    redis: &crate::redis_client::RedisPool,
+) -> AppResult<bool> {
     let key = revocation_key(jti);
 
-    let mut conn = redis.get().await.map_err(|e| {
-        crate::error::AppError::Internal(format!("redis pool error: {e}"))
-    })?;
+    let mut conn = redis
+        .get()
+        .await
+        .map_err(|e| crate::error::AppError::Internal(format!("redis pool error: {e}")))?;
     let exists: bool = conn.exists(&key).await?;
 
     Ok(exists)
@@ -99,7 +104,10 @@ mod tests {
     use super::*;
 
     fn test_settings() -> JwtSettings {
-        JwtSettings::new("a-very-long-test-secret-that-is-at-least-32-chars".to_owned(), 60)
+        JwtSettings::new(
+            "a-very-long-test-secret-that-is-at-least-32-chars".to_owned(),
+            60,
+        )
     }
 
     #[test]
@@ -168,7 +176,10 @@ mod tests {
             60,
         );
         let result = verify_token(&token, &wrong_settings);
-        assert!(result.is_err(), "token verified with wrong secret should fail");
+        assert!(
+            result.is_err(),
+            "token verified with wrong secret should fail"
+        );
     }
 
     #[test]

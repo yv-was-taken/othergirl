@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use axum::{
     body::Body,
-    extract::{FromRef, Request, State},
+    extract::{FromRef, MatchedPath, Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -30,10 +30,7 @@ use axum::{
 };
 use sqlx::PgPool;
 use tower_http::{
-    cors::CorsLayer,
-    services::ServeDir,
-    set_header::SetResponseHeaderLayer,
-    trace::TraceLayer,
+    cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer,
 };
 
 use crate::{auth::jwt::JwtSettings, config::AppConfig, redis_client::RedisPool};
@@ -56,6 +53,12 @@ impl FromRef<AppState> for JwtSettings {
 impl FromRef<AppState> for RedisPool {
     fn from_ref(state: &AppState) -> Self {
         state.redis.clone()
+    }
+}
+
+impl FromRef<AppState> for PgPool {
+    fn from_ref(state: &AppState) -> Self {
+        state.db.clone()
     }
 }
 
@@ -116,30 +119,30 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
             rate_limit::middleware,
         ));
 
-    Router::new()
-        .route("/health", get(health))
-        .route("/metrics", get(metrics_handler))
+    let assets = Router::new()
         .nest_service(
             "/assets/avatars",
-            ServeDir::new(
-                std::path::Path::new(&state.config.upload_dir)
-                    .join("avatars"),
-            )
-            .append_index_html_on_directories(false),
+            ServeDir::new(std::path::Path::new(&state.config.upload_dir).join("avatars"))
+                .append_index_html_on_directories(false),
         )
         .nest_service(
             "/assets/emotes",
             ServeDir::new(state.config.emote_upload_dir.as_str())
                 .append_index_html_on_directories(false),
         )
-        .merge(api)
-        .layer(cors)
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CACHE_CONTROL,
             axum::http::HeaderValue::from_static(
                 "public, max-age=86400, stale-while-revalidate=604800",
             ),
-        ))
+        ));
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/metrics", get(metrics_handler))
+        .merge(assets)
+        .merge(api)
+        .layer(cors)
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::X_FRAME_OPTIONS,
             axum::http::HeaderValue::from_static("DENY"),
@@ -150,24 +153,26 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
         ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::STRICT_TRANSPORT_SECURITY,
-            axum::http::HeaderValue::from_static(
-                "max-age=63072000; includeSubDomains; preload",
-            ),
+            axum::http::HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CONTENT_SECURITY_POLICY,
-            axum::http::HeaderValue::from_static(
-                "default-src 'none'; frame-ancestors 'none'",
-            ),
+            axum::http::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
         ))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(metrics_middleware))
         .with_state(state)
 }
 
-async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
+async fn metrics_middleware(
+    matched_path: Option<MatchedPath>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
     let method = req.method().to_string();
-    let path = req.uri().path().to_string();
+    let path = matched_path
+        .map(|path| path.as_str().to_owned())
+        .unwrap_or_else(|| "__unmatched__".to_owned());
     let start = Instant::now();
 
     let response = next.run(req).await;

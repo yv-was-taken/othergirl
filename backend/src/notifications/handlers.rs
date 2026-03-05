@@ -45,13 +45,12 @@ pub async fn mark_read(
     auth_user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let result = sqlx::query(
-        "UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(auth_user.user_id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(auth_user.user_id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("notification not found".into()));
@@ -71,19 +70,20 @@ pub async fn mark_all_read(
     .execute(&state.db)
     .await?;
 
-    Ok(Json(serde_json::json!({ "updated": result.rows_affected() })))
+    Ok(Json(
+        serde_json::json!({ "updated": result.rows_affected() }),
+    ))
 }
 
 pub async fn unread_count(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = FALSE",
-    )
-    .bind(auth_user.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = FALSE")
+            .bind(auth_user.user_id)
+            .fetch_one(&state.db)
+            .await?;
 
     Ok(Json(serde_json::json!({ "count": row.0 })))
 }

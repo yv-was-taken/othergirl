@@ -6,7 +6,10 @@ use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, AppState};
+use crate::{
+    error::{AppError, AppResult},
+    AppState,
+};
 
 static BLOCKLIST: &[&str] = &[
     "csam",
@@ -55,10 +58,7 @@ fn sha256_content(content: &str) -> [u8; 32] {
 fn normalize_content(content: &str) -> String {
     // 1. Strip zero-width and invisible formatting characters.
     //    These can be inserted between letters to break keyword matching.
-    let stripped: String = content
-        .chars()
-        .filter(|c| !is_invisible_char(*c))
-        .collect();
+    let stripped: String = content.chars().filter(|c| !is_invisible_char(*c)).collect();
 
     // 2. Apply Unicode NFC normalization to canonicalize composed/decomposed
     //    forms (e.g. e + combining-accent -> e-with-accent).
@@ -187,7 +187,11 @@ fn keyword_flags(content: &str) -> Vec<String> {
 async fn is_flooding(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResult<bool> {
     let key = format!("msg_rate:{chat_id}:{user_id}");
 
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
 
     // Atomic Lua script: INCR + conditional EXPIRE in a single Redis eval,
     // eliminating the TOCTOU race between separate INCR and EXPIRE calls.
@@ -206,9 +210,7 @@ async fn is_flooding(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResul
     Ok(count > 10)
 }
 
-static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(https?://|www\.)\S+").unwrap()
-});
+static URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(https?://|www\.)\S+").unwrap());
 
 fn contains_link(content: &str) -> bool {
     URL_RE.is_match(content)

@@ -173,7 +173,17 @@ async fn resolve_partner(
         .map(|(a, b)| if a == requester_id { b } else { a })
         .unwrap_or(fallback_partner_id);
 
-    let row = sqlx::query_as::<_, (Uuid, String, String, bool, Option<Vec<String>>, serde_json::Value)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            bool,
+            Option<Vec<String>>,
+            serde_json::Value,
+        ),
+    >(
         r#"
         SELECT
             u.id,

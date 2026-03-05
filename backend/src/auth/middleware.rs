@@ -2,6 +2,7 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::{header, request::Parts},
 };
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
@@ -14,10 +15,39 @@ pub struct AuthUser {
     pub user_id: Uuid,
 }
 
+pub async fn ensure_account_active(db: &PgPool, user_id: Uuid) -> AppResult<()> {
+    let (is_suspended, deletion_due) = sqlx::query_as::<_, (bool, bool)>(
+        r#"
+        SELECT
+            is_suspended,
+            COALESCE(deletion_scheduled_at <= NOW(), FALSE) AS deletion_due
+        FROM users
+        WHERE id = $1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("user not found".to_owned()))?;
+
+    if is_suspended {
+        return Err(AppError::Forbidden("account suspended".to_owned()));
+    }
+
+    if deletion_due {
+        return Err(AppError::Forbidden(
+            "account deletion deadline reached".to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
 impl<S> FromRequestParts<S> for AuthUser
 where
     JwtSettings: FromRef<S>,
     crate::redis_client::RedisPool: FromRef<S>,
+    PgPool: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = AppError;
@@ -44,6 +74,9 @@ where
 
         let user_id = Uuid::parse_str(&claims.sub)
             .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+
+        let db = PgPool::from_ref(state);
+        ensure_account_active(&db, user_id).await?;
 
         Ok(Self { user_id })
     }

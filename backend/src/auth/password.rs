@@ -1,8 +1,8 @@
+use argon2::password_hash::rand_core::OsRng;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use argon2::password_hash::rand_core::OsRng;
 
 use crate::error::{AppError, AppResult};
 
@@ -18,7 +18,8 @@ pub fn hash_password(password: &str) -> AppResult<String> {
 }
 
 pub fn verify_password(hash: &str, password: &str) -> AppResult<bool> {
-    let parsed = PasswordHash::new(hash).map_err(|e| AppError::Internal(format!("password hash parsing failed: {e}")))?;
+    let parsed = PasswordHash::new(hash)
+        .map_err(|e| AppError::Internal(format!("password hash parsing failed: {e}")))?;
 
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
@@ -44,7 +45,10 @@ mod tests {
     #[test]
     fn hash_format_is_valid_argon2() {
         let hash = hash_password("test-password").unwrap();
-        assert!(hash.starts_with("$argon2"), "hash should start with $argon2, got: {hash}");
+        assert!(
+            hash.starts_with("$argon2"),
+            "hash should start with $argon2, got: {hash}"
+        );
         // Verify the hash can be parsed back
         PasswordHash::new(&hash).expect("hash should be a valid PHC string");
     }

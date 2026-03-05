@@ -40,7 +40,7 @@
     try {
       const res = await apiFetch<{ notifications: Notification[] }>('/api/notifications?limit=20');
       notifications = res.notifications ?? [];
-      unreadCount = notifications.filter((n) => !n.is_read).length;
+      await loadUnreadCount();
     } catch {
       // Silently fail
     } finally {

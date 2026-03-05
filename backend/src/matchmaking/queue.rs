@@ -70,7 +70,11 @@ pub async fn join_or_match(
 
     ensure_user_matchable(state, user_id).await?;
 
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
 
     if let Some(chat_id) = active_chat_for(&mut conn, user_id).await? {
         let partner_id = resolve_partner_for_chat(state, chat_id, user_id)
@@ -140,7 +144,11 @@ pub async fn join_or_match(
 }
 
 pub async fn leave_queue(state: &AppState, user_id: Uuid) -> AppResult<bool> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let queue_keys = queued_in(&mut conn, user_id).await?;
 
     if queue_keys.is_none() {
@@ -152,7 +160,11 @@ pub async fn leave_queue(state: &AppState, user_id: Uuid) -> AppResult<bool> {
 }
 
 pub async fn get_status(state: &AppState, user_id: Uuid) -> AppResult<QueueStatus> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
 
     if let Some(chat_id) = active_chat_for(&mut conn, user_id).await? {
         return Ok(QueueStatus::Matched { chat_id });
@@ -175,7 +187,11 @@ pub async fn get_status(state: &AppState, user_id: Uuid) -> AppResult<QueueStatu
 }
 
 pub async fn end_chat_session(state: &AppState, user_a_id: Uuid, user_b_id: Uuid) -> AppResult<()> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let cooldown = state.config.cooldown_seconds;
 
     let _: usize = conn.del(active_chat_key(user_a_id)).await?;
@@ -280,7 +296,11 @@ pub async fn active_chat_for(
 }
 
 pub async fn refresh_active_chat_ttl(state: &AppState, user_id: Uuid) -> AppResult<()> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let ttl = state.config.queue_session_ttl_seconds;
     let key = active_chat_key(user_id);
     let exists: bool = conn.exists(&key).await?;
@@ -296,7 +316,8 @@ pub async fn set_match_notification(
     user_id: Uuid,
     notification: &MatchNotification,
 ) -> AppResult<()> {
-    let payload = serde_json::to_string(notification).map_err(|e| AppError::Internal(format!("failed to serialize match notification: {e}")))?;
+    let payload = serde_json::to_string(notification)
+        .map_err(|e| AppError::Internal(format!("failed to serialize match notification: {e}")))?;
     let _: () = conn
         .set_ex(
             match_notification_key(user_id),
@@ -311,13 +332,19 @@ pub async fn take_match_notification(
     state: &AppState,
     user_id: Uuid,
 ) -> AppResult<Option<MatchNotification>> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let payload: Option<String> = conn.get(match_notification_key(user_id)).await?;
     if let Some(payload) = payload {
         let _: usize = conn.del(match_notification_key(user_id)).await?;
         return serde_json::from_str(payload.as_str())
             .map(Some)
-            .map_err(|e| AppError::Internal(format!("failed to deserialize match notification: {e}")));
+            .map_err(|e| {
+                AppError::Internal(format!("failed to deserialize match notification: {e}"))
+            });
     }
     Ok(None)
 }

@@ -20,7 +20,7 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::{
-    auth::jwt::verify_token,
+    auth::{jwt::verify_token, middleware::ensure_account_active},
     awards::service,
     chat::{encryption, safety},
     error::{AppError, AppResult},
@@ -38,6 +38,8 @@ pub struct ChatHub {
     /// Dedicated Redis client for SUBSCRIBE connections (pub/sub requires a
     /// non-shared connection). `None` in tests.
     redis_client: Option<redis::Client>,
+    /// Unique identifier used to ignore events this process published.
+    redis_instance_id: Uuid,
 }
 
 impl Default for ChatHub {
@@ -47,6 +49,7 @@ impl Default for ChatHub {
             redis_subscribers: Arc::default(),
             redis_pool: None,
             redis_client: None,
+            redis_instance_id: Uuid::new_v4(),
         }
     }
 }
@@ -69,6 +72,7 @@ impl ChatHub {
             redis_subscribers: Arc::default(),
             redis_pool: Some(pool),
             redis_client: Some(client),
+            redis_instance_id: Uuid::new_v4(),
         }
     }
 
@@ -90,7 +94,12 @@ impl ChatHub {
         if let Some(ref client) = self.redis_client {
             let mut subs = self.redis_subscribers.write().await;
             if !subs.contains_key(&chat_id) {
-                let task = spawn_redis_subscriber(client.clone(), chat_id, sender.clone());
+                let task = spawn_redis_subscriber(
+                    client.clone(),
+                    chat_id,
+                    sender.clone(),
+                    self.redis_instance_id,
+                );
                 subs.insert(chat_id, task);
             }
         }
@@ -110,10 +119,18 @@ impl ChatHub {
 
         // Publish to Redis for cross-instance delivery.
         if let Some(ref pool) = self.redis_pool {
-            if let Ok(payload) = serde_json::to_string(&event) {
+            let redis_event = RedisRelayEvent {
+                event,
+                origin_instance_id: Some(self.redis_instance_id),
+            };
+
+            if let Ok(payload) = serde_json::to_string(&redis_event) {
                 let channel = Self::redis_channel(chat_id);
                 let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                    let mut conn = pool.get().await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+                    let mut conn = pool
+                        .get()
+                        .await
+                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
                     let _: () = conn.publish(channel, payload).await?;
                     Ok(())
                 }
@@ -154,6 +171,14 @@ impl ChatHub {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct RedisRelayEvent {
+    #[serde(flatten)]
+    event: ServerEvent,
+    #[serde(default)]
+    origin_instance_id: Option<Uuid>,
+}
+
 /// Spawn a background task that subscribes to the Redis pub/sub channel for
 /// `chat_id` and relays incoming messages into the local broadcast `sender`.
 ///
@@ -164,11 +189,12 @@ fn spawn_redis_subscriber(
     client: redis::Client,
     chat_id: Uuid,
     sender: broadcast::Sender<ServerEvent>,
+    redis_instance_id: Uuid,
 ) -> JoinHandle<()> {
     let channel_name = ChatHub::redis_channel(chat_id);
     tokio::spawn(async move {
         loop {
-            match subscribe_loop(&client, &channel_name, &sender).await {
+            match subscribe_loop(&client, &channel_name, &sender, redis_instance_id).await {
                 Ok(()) => {
                     // Clean exit — no more receivers.
                     debug!(%chat_id, "Redis subscriber exiting: no receivers");
@@ -195,6 +221,7 @@ async fn subscribe_loop(
     client: &redis::Client,
     channel_name: &str,
     sender: &broadcast::Sender<ServerEvent>,
+    redis_instance_id: Uuid,
 ) -> Result<(), redis::RedisError> {
     let mut pubsub = client.get_async_pubsub().await?;
     pubsub.subscribe(channel_name).await?;
@@ -205,18 +232,37 @@ async fn subscribe_loop(
             return Ok(());
         }
         let payload: String = msg.get_payload()?;
-        match serde_json::from_str::<ServerEvent>(&payload) {
-            Ok(event) => {
+        match parse_redis_relay_payload(&payload, redis_instance_id) {
+            Ok(Some(event)) => {
                 // Send to local broadcast; ignore error (no receivers).
                 let _ = sender.send(event);
             }
-            Err(err) => {
-                warn!(?err, "failed to deserialize Redis chat event");
-            }
+            Ok(None) => continue,
+            Err(err) => warn!(?err, "failed to deserialize Redis chat event"),
         }
     }
 
-    Ok(())
+    if sender.receiver_count() == 0 {
+        return Ok(());
+    }
+
+    Err(redis::RedisError::from((
+        redis::ErrorKind::IoError,
+        "redis pub/sub stream ended unexpectedly",
+    )))
+}
+
+fn parse_redis_relay_payload(
+    payload: &str,
+    redis_instance_id: Uuid,
+) -> Result<Option<ServerEvent>, serde_json::Error> {
+    let event = serde_json::from_str::<RedisRelayEvent>(payload)?;
+
+    if event.origin_instance_id == Some(redis_instance_id) {
+        return Ok(None);
+    }
+
+    Ok(Some(event.event))
 }
 
 #[derive(Debug, Deserialize)]
@@ -323,6 +369,7 @@ pub async fn ws_handler(
         let claims = verify_token(token, &state.jwt)?;
         let user_id = Uuid::parse_str(claims.sub.as_str())
             .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+        ensure_account_active(&state.db, user_id).await?;
 
         if let Some(chat_id) = params.chat_id {
             ensure_chat_member(&state, chat_id, user_id).await?;
@@ -555,6 +602,7 @@ async fn authenticate_socket(
         let claims = verify_token(token.as_str(), &state.jwt)?;
         let user_id = Uuid::parse_str(claims.sub.as_str())
             .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+        ensure_account_active(&state.db, user_id).await?;
         let chat_id = chat_id.or(initial_chat_id);
         if let Some(chat_id) = chat_id {
             ensure_chat_member(state, chat_id, user_id).await?;
@@ -567,6 +615,7 @@ async fn authenticate_socket(
     let claims = verify_token(bootstrap.token.as_str(), &state.jwt)?;
     let user_id = Uuid::parse_str(claims.sub.as_str())
         .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+    ensure_account_active(&state.db, user_id).await?;
     let chat_id = bootstrap.chat_id.or(initial_chat_id);
     if let Some(chat_id) = chat_id {
         ensure_chat_member(state, chat_id, user_id).await?;
@@ -856,7 +905,11 @@ async fn register_keep_vote(
         }
     }
 
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let vote_key = keep_vote_key(chat_id, voter_id);
     let _: () = conn
         .set_ex(vote_key, if keep { "1" } else { "0" }, 2 * 60 * 60)
@@ -977,7 +1030,17 @@ async fn resolve_partner_payload(
 ) -> AppResult<serde_json::Value> {
     // Single query: resolve the partner from the chats table and fetch their
     // profile in one round-trip instead of two separate queries.
-    let row = sqlx::query_as::<_, (Uuid, String, String, bool, Option<Vec<String>>, serde_json::Value)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            bool,
+            Option<Vec<String>>,
+            serde_json::Value,
+        ),
+    >(
         r#"
         SELECT
             u.id,
@@ -1029,14 +1092,22 @@ async fn resolve_partner_payload(
 }
 
 async fn set_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let ttl = state.config.queue_session_ttl_seconds;
     let _: () = conn.set_ex(format!("session:{user_id}"), "1", ttl).await?;
     Ok(())
 }
 
 async fn clear_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let _: usize = conn.del(format!("session:{user_id}")).await?;
     Ok(())
 }
@@ -1048,6 +1119,7 @@ fn keep_vote_key(chat_id: Uuid, user_id: Uuid) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[tokio::test]
     async fn prune_removes_channel_when_no_receivers() {
@@ -1094,5 +1166,38 @@ mod tests {
 
         assert!(hub.prune_if_no_receivers(chat_id).await);
         assert!(!hub.channel_exists(chat_id).await);
+    }
+
+    #[test]
+    fn parse_redis_relay_payload_skips_self_originated_events() {
+        let instance_id = Uuid::new_v4();
+        let payload = serde_json::to_string(&RedisRelayEvent {
+            event: ServerEvent::Typing {
+                user_id: Uuid::new_v4(),
+                is_typing: true,
+            },
+            origin_instance_id: Some(instance_id),
+        })
+        .expect("serialize relay event");
+
+        let parsed = parse_redis_relay_payload(&payload, instance_id).expect("parse relay payload");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn parse_redis_relay_payload_accepts_legacy_payloads() {
+        let event = ServerEvent::Message {
+            id: Uuid::new_v4(),
+            chat_id: Uuid::new_v4(),
+            sender_id: Uuid::new_v4(),
+            content: "hello".to_owned(),
+            timestamp: Utc::now(),
+            flagged: false,
+        };
+        let payload = serde_json::to_string(&event).expect("serialize legacy event");
+
+        let parsed =
+            parse_redis_relay_payload(&payload, Uuid::new_v4()).expect("parse legacy payload");
+        assert!(matches!(parsed, Some(ServerEvent::Message { .. })));
     }
 }

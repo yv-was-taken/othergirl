@@ -3,16 +3,8 @@ use std::{net::SocketAddr, sync::Arc};
 use tracing::{info, warn};
 
 use othergirl_backend::{
-    auth::jwt::JwtSettings,
-    build_app,
-    chat,
-    config::AppConfig,
-    db,
-    matchmaking,
-    metrics,
-    payments,
-    redis_client,
-    AppState,
+    auth::jwt::JwtSettings, build_app, chat, config::AppConfig, db, matchmaking, metrics, payments,
+    redis_client, AppState,
 };
 
 #[tokio::main]
@@ -44,7 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Validate Redis connection
     {
-        let mut conn = redis.get().await.expect("failed to get Redis connection from pool");
+        let mut conn = redis
+            .get()
+            .await
+            .expect("failed to get Redis connection from pool");
         redis::cmd("PING")
             .query_async::<String>(&mut *conn)
             .await
@@ -64,10 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
-    let matcher_handle =
-        matchmaking::matcher::spawn_matcher(state.clone(), shutdown_token.clone());
-    let reconciler_handle =
-        payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
+    let matcher_handle = matchmaking::matcher::spawn_matcher(state.clone(), shutdown_token.clone());
+    let reconciler_handle = payments::spawn_background_jobs(state.clone(), shutdown_token.clone());
 
     if config.cors_origin.trim() == "*" {
         panic!(

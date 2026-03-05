@@ -33,9 +33,18 @@ struct SparkBundle {
 /// Server-defined spark bundles. Clients select a bundle by index;
 /// the server looks up the price -- never trust the client for pricing.
 const SPARK_BUNDLES: &[SparkBundle] = &[
-    SparkBundle { sparks: 100, price_cents: 499 },
-    SparkBundle { sparks: 500, price_cents: 1999 },
-    SparkBundle { sparks: 1200, price_cents: 3999 },
+    SparkBundle {
+        sparks: 100,
+        price_cents: 499,
+    },
+    SparkBundle {
+        sparks: 500,
+        price_cents: 1999,
+    },
+    SparkBundle {
+        sparks: 1200,
+        price_cents: 3999,
+    },
 ];
 
 #[derive(Debug, Deserialize, Validate)]
@@ -128,7 +137,9 @@ pub async fn subscribe(
         .config
         .stripe_premium_price_id
         .clone()
-        .ok_or_else(|| AppError::ServiceUnavailable("premium stripe price is not configured".to_owned()))?;
+        .ok_or_else(|| {
+            AppError::ServiceUnavailable("premium stripe price is not configured".to_owned())
+        })?;
 
     let success_url = payload
         .success_url
@@ -173,7 +184,9 @@ pub async fn subscribe(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session.url.ok_or_else(|| AppError::Internal("stripe checkout session missing URL".to_owned()))?;
+    let checkout_url = session
+        .url
+        .ok_or_else(|| AppError::Internal("stripe checkout session missing URL".to_owned()))?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -270,7 +283,9 @@ pub async fn buy_sparks(
     }
 
     let session = stripe::create_checkout_session(stripe_secret.as_str(), &params).await?;
-    let checkout_url = session.url.ok_or_else(|| AppError::Internal("stripe checkout session missing URL".to_owned()))?;
+    let checkout_url = session
+        .url
+        .ok_or_else(|| AppError::Internal("stripe checkout session missing URL".to_owned()))?;
 
     Ok(Json(serde_json::json!({
         "provider": "stripe",
@@ -287,10 +302,9 @@ pub async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<serde_json::Value>> {
-    let webhook_secret =
-        state.config.stripe_webhook_secret.clone().ok_or_else(|| {
-            AppError::ServiceUnavailable("stripe webhook secret is not configured".to_owned())
-        })?;
+    let webhook_secret = state.config.stripe_webhook_secret.clone().ok_or_else(|| {
+        AppError::ServiceUnavailable("stripe webhook secret is not configured".to_owned())
+    })?;
 
     let signature = headers
         .get("stripe-signature")
@@ -305,7 +319,11 @@ pub async fn webhook(
     // Begin a transaction so the event is only recorded as processed when
     // all side effects succeed.  If processing fails the transaction rolls
     // back and Stripe can safely retry the webhook.
-    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(format!("failed to begin webhook transaction: {e}")))?;
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to begin webhook transaction: {e}")))?;
 
     let inserted = sqlx::query_scalar::<_, String>(
         r#"
@@ -354,7 +372,9 @@ pub async fn webhook(
         _ => {}
     }
 
-    tx.commit().await.map_err(|e| AppError::Internal(format!("failed to commit webhook transaction: {e}")))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to commit webhook transaction: {e}")))?;
 
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -618,7 +638,9 @@ pub async fn cashout_request(
                 return Err(AppError::Internal("unexpected cashout status".to_owned()));
             }
             None => {
-                return Err(AppError::Internal("cashout request not found after insert".to_owned()));
+                return Err(AppError::Internal(
+                    "cashout request not found after insert".to_owned(),
+                ));
             }
         }
     }
@@ -675,7 +697,10 @@ pub async fn cashout_status(
     Ok(Json(serde_json::json!({ "connect": connect })))
 }
 
-pub fn spawn_cashout_reconciler(state: AppState, cancel: tokio_util::sync::CancellationToken) -> tokio::task::JoinHandle<()> {
+pub fn spawn_cashout_reconciler(
+    state: AppState,
+    cancel: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let base_interval = std::time::Duration::from_secs(CASHOUT_RECONCILE_INTERVAL_SECS);
         let max_backoff = std::time::Duration::from_secs(CASHOUT_RECONCILE_MAX_BACKOFF_SECS);
@@ -723,12 +748,10 @@ const CASHOUT_RECONCILER_LOCK_ID: i64 = 0x4F47_CA50; // "OG_CASHOUT" in hex-ish
 
 /// Returns `Ok(true)` if Stripe rate-limited us during this pass (caller should back off).
 async fn reconcile_stale_pending_cashouts(state: &AppState) -> AppResult<bool> {
-    let locked = sqlx::query_scalar::<_, bool>(
-        "SELECT pg_try_advisory_lock($1)",
-    )
-    .bind(CASHOUT_RECONCILER_LOCK_ID)
-    .fetch_one(&state.db)
-    .await?;
+    let locked = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+        .bind(CASHOUT_RECONCILER_LOCK_ID)
+        .fetch_one(&state.db)
+        .await?;
 
     if !locked {
         return Ok(false);
@@ -1257,8 +1280,7 @@ async fn apply_sparks_checkout(
         return Ok(());
     }
 
-    ledger::apply_spark_transaction(tx, user_id, sparks_amount, TxType::Purchase, None)
-        .await?;
+    ledger::apply_spark_transaction(tx, user_id, sparks_amount, TxType::Purchase, None).await?;
 
     Ok(())
 }

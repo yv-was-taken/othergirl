@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use axum::{extract::{Multipart, State}, Json};
+use axum::{
+    extract::{Multipart, State},
+    Json,
+};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -224,6 +227,13 @@ const ALLOWED_AVATAR_TYPES: &[(&str, &str)] = &[
     ("image/gif", "gif"),
 ];
 
+fn avatar_public_url(public_api_base_url: &str, filename: &str) -> String {
+    format!(
+        "{}/assets/avatars/{filename}",
+        public_api_base_url.trim_end_matches('/'),
+    )
+}
+
 pub async fn upload_avatar(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -235,19 +245,14 @@ pub async fn upload_avatar(
         .map_err(|e| AppError::BadRequest(format!("multipart error: {e}")))?
         .ok_or_else(|| AppError::BadRequest("no file uploaded".to_owned()))?;
 
-    let content_type = field
-        .content_type()
-        .unwrap_or("")
-        .to_owned();
+    let content_type = field.content_type().unwrap_or("").to_owned();
 
-    let ext = ALLOWED_AVATAR_TYPES
+    let _ext = ALLOWED_AVATAR_TYPES
         .iter()
         .find(|(mime, _)| *mime == content_type)
         .map(|(_, ext)| *ext)
         .ok_or_else(|| {
-            AppError::BadRequest(
-                "unsupported image type; allowed: jpeg, png, webp, gif".to_owned(),
-            )
+            AppError::BadRequest("unsupported image type; allowed: jpeg, png, webp, gif".to_owned())
         })?;
 
     let data = field
@@ -269,34 +274,21 @@ pub async fn upload_avatar(
         .await
         .map_err(|e| AppError::Internal(format!("failed to create avatar dir: {e}")))?;
 
-    // Remove any existing avatar files for this user
-    let filename = format!("{}.{}", auth_user.user_id, ext);
-    for allowed in ALLOWED_AVATAR_TYPES {
-        let old_path = avatars_dir.join(format!("{}.{}", auth_user.user_id, allowed.1));
-        let _ = tokio::fs::remove_file(&old_path).await;
-    }
-
+    // Always save as WebP so the filename is deterministic ({user_id}.webp).
+    // Concurrent uploads overwrite the same file and the last DB writer wins,
+    // keeping avatar_url and the file on disk consistent without cleanup races.
+    let filename = format!("{}.webp", auth_user.user_id);
     let file_path = avatars_dir.join(&filename);
 
-    // Save resized image
     let save_path = file_path.clone();
-    let save_ext = ext.to_owned();
     tokio::task::spawn_blocking(move || {
-        use image::ImageFormat;
-        let format = match save_ext.as_str() {
-            "jpg" => ImageFormat::Jpeg,
-            "png" => ImageFormat::Png,
-            "webp" => ImageFormat::WebP,
-            "gif" => ImageFormat::Gif,
-            _ => ImageFormat::Png,
-        };
-        resized.save_with_format(&save_path, format)
+        resized.save_with_format(&save_path, image::ImageFormat::WebP)
     })
     .await
     .map_err(|e| AppError::Internal(format!("task join error: {e}")))?
     .map_err(|e| AppError::Internal(format!("failed to save avatar: {e}")))?;
 
-    let avatar_url = format!("/assets/avatars/{filename}");
+    let avatar_url = avatar_public_url(&state.config.public_api_base_url, &filename);
 
     sqlx::query("UPDATE users SET avatar_url = $2, updated_at = NOW() WHERE id = $1")
         .bind(auth_user.user_id)
@@ -335,21 +327,16 @@ pub async fn delete_me(
     auth_user: AuthUser,
     Json(payload): Json<DeleteAccountRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT password_hash FROM users WHERE id = $1",
-    )
-    .bind(auth_user.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
+    let row =
+        sqlx::query_as::<_, (Option<String>,)>("SELECT password_hash FROM users WHERE id = $1")
+            .bind(auth_user.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound("user not found".to_owned()))?;
 
-    let hash = row
-        .0
-        .ok_or_else(|| {
-            AppError::BadRequest(
-                "account uses OAuth login; contact support to delete".to_owned(),
-            )
-        })?;
+    let hash = row.0.ok_or_else(|| {
+        AppError::BadRequest("account uses OAuth login; contact support to delete".to_owned())
+    })?;
 
     if !verify_password(&hash, &payload.password)? {
         return Err(AppError::Unauthorized("incorrect password".to_owned()));

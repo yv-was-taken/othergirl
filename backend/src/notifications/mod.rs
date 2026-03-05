@@ -1,7 +1,10 @@
 pub mod handlers;
 pub mod models;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 
 use crate::AppState;
 

@@ -89,42 +89,66 @@ mod tests {
 
     #[test]
     fn bad_request_returns_400() {
-        assert_eq!(status_of(AppError::BadRequest("test".into())), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_of(AppError::BadRequest("test".into())),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]
     fn unauthorized_returns_401() {
-        assert_eq!(status_of(AppError::Unauthorized("test".into())), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            status_of(AppError::Unauthorized("test".into())),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]
     fn forbidden_returns_403() {
-        assert_eq!(status_of(AppError::Forbidden("test".into())), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_of(AppError::Forbidden("test".into())),
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[test]
     fn not_found_returns_404() {
-        assert_eq!(status_of(AppError::NotFound("test".into())), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_of(AppError::NotFound("test".into())),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]
     fn conflict_returns_409() {
-        assert_eq!(status_of(AppError::Conflict("test".into())), StatusCode::CONFLICT);
+        assert_eq!(
+            status_of(AppError::Conflict("test".into())),
+            StatusCode::CONFLICT
+        );
     }
 
     #[test]
     fn too_many_requests_returns_429() {
-        assert_eq!(status_of(AppError::TooManyRequests("test".into())), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            status_of(AppError::TooManyRequests("test".into())),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 
     #[test]
     fn service_unavailable_returns_503() {
-        assert_eq!(status_of(AppError::ServiceUnavailable("test".into())), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            status_of(AppError::ServiceUnavailable("test".into())),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
     fn internal_returns_500() {
-        assert_eq!(status_of(AppError::Internal("test".into())), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            status_of(AppError::Internal("test".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[test]

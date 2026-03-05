@@ -113,7 +113,8 @@ async fn login_with_wrong_password_returns_401() {
     let (username, email) = app.unique_credentials();
 
     // Register
-    app.register_user(&username, &email, "correctpassword1").await;
+    app.register_user(&username, &email, "correctpassword1")
+        .await;
 
     // Login with wrong password
     let resp = app
@@ -151,7 +152,9 @@ async fn refresh_token_returns_new_token() {
     let app = spawn_app().await;
     let (username, email) = app.unique_credentials();
 
-    let (token, _user_id) = app.register_user(&username, &email, "validpassword123").await;
+    let (token, _user_id) = app
+        .register_user(&username, &email, "validpassword123")
+        .await;
 
     let resp = app
         .authed_post("/api/auth/refresh", &token, &json!({}))
@@ -171,7 +174,9 @@ async fn logout_revokes_token() {
     let app = spawn_app().await;
     let (username, email) = app.unique_credentials();
 
-    let (token, _user_id) = app.register_user(&username, &email, "validpassword123").await;
+    let (token, _user_id) = app
+        .register_user(&username, &email, "validpassword123")
+        .await;
 
     // Logout
     let resp = app

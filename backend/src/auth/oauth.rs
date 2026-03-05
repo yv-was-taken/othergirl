@@ -53,6 +53,8 @@ struct OauthUserRow {
     email: Option<String>,
     is_premium: bool,
     is_age_verified: bool,
+    is_suspended: bool,
+    deletion_due: bool,
     created_at: DateTime<Utc>,
 }
 
@@ -73,7 +75,11 @@ pub async fn oauth_start(
     let state_token = CsrfToken::new_random();
     let oauth_state = state_token.secret().to_owned();
 
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let _: () = conn
         .set_ex(
             oauth_state_key(oauth_state.as_str()),
@@ -119,6 +125,17 @@ pub async fn oauth_callback(
     };
 
     let user = find_or_create_oauth_user(&state, provider.as_str(), identity).await?;
+
+    if user.is_suspended {
+        return Err(AppError::Forbidden("account suspended".to_owned()));
+    }
+
+    if user.deletion_due {
+        return Err(AppError::Forbidden(
+            "account deletion deadline reached".to_owned(),
+        ));
+    }
+
     let token = issue_token(user.id, &state.jwt)?;
 
     let response = AuthResponse {
@@ -138,8 +155,13 @@ pub async fn oauth_callback(
     }
 
     let exchange_code = Uuid::new_v4().simple().to_string();
-    let serialized_response = serde_json::to_string(&response).map_err(|e| AppError::Internal(format!("failed to serialize oauth response: {e}")))?;
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
+    let serialized_response = serde_json::to_string(&response)
+        .map_err(|e| AppError::Internal(format!("failed to serialize oauth response: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let _: () = conn
         .set_ex(
             oauth_exchange_key(exchange_code.as_str()),
@@ -174,7 +196,11 @@ pub async fn oauth_exchange(
         ));
     }
 
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let key = oauth_exchange_key(code);
     let (serialized_response, _): (Option<String>, usize) = redis::pipe()
         .atomic()
@@ -187,8 +213,12 @@ pub async fn oauth_exchange(
         AppError::Unauthorized("oauth exchange code is invalid or expired".to_owned())
     })?;
 
-    let response = serde_json::from_str::<AuthResponse>(serialized_response.as_str())
-        .map_err(|e| AppError::Internal(format!("failed to deserialize oauth exchange response: {e}")))?;
+    let response =
+        serde_json::from_str::<AuthResponse>(serialized_response.as_str()).map_err(|e| {
+            AppError::Internal(format!(
+                "failed to deserialize oauth exchange response: {e}"
+            ))
+        })?;
 
     Ok(Json(response))
 }
@@ -226,11 +256,9 @@ fn oauth_identity_from_telegram(
     state: &AppState,
     query: &OauthCallbackQuery,
 ) -> AppResult<OauthIdentity> {
-    let bot_token = state
-        .config
-        .telegram_bot_token
-        .as_deref()
-        .ok_or_else(|| AppError::ServiceUnavailable("telegram oauth is not configured".to_owned()))?;
+    let bot_token = state.config.telegram_bot_token.as_deref().ok_or_else(|| {
+        AppError::ServiceUnavailable("telegram oauth is not configured".to_owned())
+    })?;
 
     let hash = query
         .hash
@@ -279,7 +307,8 @@ fn oauth_identity_from_telegram(
         .join("\n");
 
     let secret = Sha256::digest(bot_token.as_bytes());
-    let mut mac = HmacSha256::new_from_slice(secret.as_slice()).map_err(|e| AppError::Internal(format!("HMAC key init failed: {e}")))?;
+    let mut mac = HmacSha256::new_from_slice(secret.as_slice())
+        .map_err(|e| AppError::Internal(format!("HMAC key init failed: {e}")))?;
     mac.update(data_check_string.as_bytes());
     let expected = to_hex(&mac.finalize().into_bytes());
 
@@ -326,7 +355,9 @@ async fn fetch_google_identity(access_token: &str) -> AppResult<OauthIdentity> {
         .map_err(|_| AppError::Unauthorized("google oauth userinfo failed".to_owned()))?
         .json::<GoogleUser>()
         .await
-        .map_err(|e| AppError::Internal(format!("failed to parse google userinfo response: {e}")))?;
+        .map_err(|e| {
+            AppError::Internal(format!("failed to parse google userinfo response: {e}"))
+        })?;
 
     Ok(OauthIdentity {
         provider_id: user.sub,
@@ -354,7 +385,9 @@ async fn fetch_discord_identity(access_token: &str) -> AppResult<OauthIdentity> 
         .map_err(|_| AppError::Unauthorized("discord oauth userinfo failed".to_owned()))?
         .json::<DiscordUser>()
         .await
-        .map_err(|e| AppError::Internal(format!("failed to parse discord userinfo response: {e}")))?;
+        .map_err(|e| {
+            AppError::Internal(format!("failed to parse discord userinfo response: {e}"))
+        })?;
 
     let username = if user.discriminator == "0" {
         user.username
@@ -396,7 +429,9 @@ async fn fetch_github_identity(access_token: &str) -> AppResult<OauthIdentity> {
         .map_err(|_| AppError::Unauthorized("github oauth userinfo failed".to_owned()))?
         .json::<GithubUser>()
         .await
-        .map_err(|e| AppError::Internal(format!("failed to parse github userinfo response: {e}")))?;
+        .map_err(|e| {
+            AppError::Internal(format!("failed to parse github userinfo response: {e}"))
+        })?;
 
     let mut email = user.email;
     if email.is_none() {
@@ -411,7 +446,9 @@ async fn fetch_github_identity(access_token: &str) -> AppResult<OauthIdentity> {
             .map_err(|_| AppError::Unauthorized("github oauth emails failed".to_owned()))?
             .json::<Vec<GithubEmail>>()
             .await
-            .map_err(|e| AppError::Internal(format!("failed to parse github emails response: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(format!("failed to parse github emails response: {e}"))
+            })?;
 
         email = emails
             .into_iter()
@@ -435,7 +472,15 @@ async fn find_or_create_oauth_user(
 
     let existing = sqlx::query_as::<_, OauthUserRow>(
         r#"
-        SELECT u.id, u.username, u.email, u.is_premium, u.is_age_verified, u.created_at
+        SELECT
+            u.id,
+            u.username,
+            u.email,
+            u.is_premium,
+            u.is_age_verified,
+            u.is_suspended,
+            COALESCE(u.deletion_scheduled_at <= NOW(), FALSE) AS deletion_due,
+            u.created_at
         FROM oauth_accounts oa
         JOIN users u ON u.id = oa.user_id
         WHERE oa.provider = $1 AND oa.provider_id = $2
@@ -457,7 +502,7 @@ async fn find_or_create_oauth_user(
             r#"
             INSERT INTO users (username, email, password_hash)
             VALUES ($1, $2, NULL)
-            RETURNING id, username, email, is_premium, is_age_verified, created_at
+            RETURNING id, username, email, is_premium, is_age_verified, is_suspended, FALSE AS deletion_due, created_at
             "#,
         )
         .bind(username.as_str())
@@ -528,10 +573,12 @@ fn oauth_client(state: &AppState, provider: &str) -> AppResult<BasicClient> {
         }
     };
 
-    let client_id = client_id
-        .ok_or_else(|| AppError::ServiceUnavailable(format!("{provider} oauth is not configured")))?;
-    let client_secret = client_secret
-        .ok_or_else(|| AppError::ServiceUnavailable(format!("{provider} oauth is not configured")))?;
+    let client_id = client_id.ok_or_else(|| {
+        AppError::ServiceUnavailable(format!("{provider} oauth is not configured"))
+    })?;
+    let client_secret = client_secret.ok_or_else(|| {
+        AppError::ServiceUnavailable(format!("{provider} oauth is not configured"))
+    })?;
 
     let redirect_url = format!(
         "{}/api/auth/oauth/{provider}/callback",
@@ -541,10 +588,17 @@ fn oauth_client(state: &AppState, provider: &str) -> AppResult<BasicClient> {
     let client = BasicClient::new(
         ClientId::new(client_id),
         Some(ClientSecret::new(client_secret)),
-        AuthUrl::new(auth_url.to_owned()).map_err(|e| AppError::Internal(format!("invalid auth URL: {e}")))?,
-        Some(TokenUrl::new(token_url.to_owned()).map_err(|e| AppError::Internal(format!("invalid token URL: {e}")))?),
+        AuthUrl::new(auth_url.to_owned())
+            .map_err(|e| AppError::Internal(format!("invalid auth URL: {e}")))?,
+        Some(
+            TokenUrl::new(token_url.to_owned())
+                .map_err(|e| AppError::Internal(format!("invalid token URL: {e}")))?,
+        ),
     )
-    .set_redirect_uri(RedirectUrl::new(redirect_url).map_err(|e| AppError::Internal(format!("invalid redirect URL: {e}")))?);
+    .set_redirect_uri(
+        RedirectUrl::new(redirect_url)
+            .map_err(|e| AppError::Internal(format!("invalid redirect URL: {e}")))?,
+    );
 
     Ok(client)
 }
@@ -559,15 +613,12 @@ fn provider_scopes(provider: &str) -> &'static [&'static str] {
 }
 
 fn build_telegram_auth_url(state: &AppState, oauth_state: &str) -> AppResult<String> {
-    let token = state
-        .config
-        .telegram_bot_token
-        .as_deref()
-        .ok_or_else(|| AppError::ServiceUnavailable("telegram oauth is not configured".to_owned()))?;
-    let bot_id = token
-        .split(':')
-        .next()
-        .ok_or_else(|| AppError::ServiceUnavailable("invalid telegram bot token format".to_owned()))?;
+    let token = state.config.telegram_bot_token.as_deref().ok_or_else(|| {
+        AppError::ServiceUnavailable("telegram oauth is not configured".to_owned())
+    })?;
+    let bot_id = token.split(':').next().ok_or_else(|| {
+        AppError::ServiceUnavailable("invalid telegram bot token format".to_owned())
+    })?;
 
     let callback = format!(
         "{}/api/auth/oauth/telegram/callback?state={}",
@@ -590,7 +641,11 @@ async fn validate_oauth_state(
 ) -> AppResult<()> {
     let incoming_state =
         incoming_state.ok_or_else(|| AppError::BadRequest("missing oauth state".to_owned()))?;
-    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let stored_provider: Option<String> = conn.get(oauth_state_key(incoming_state)).await?;
 
     if stored_provider.as_deref() != Some(provider) {

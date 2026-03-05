@@ -99,8 +99,7 @@ impl AppConfig {
             cooldown_seconds: env_u64("MATCH_COOLDOWN_SECONDS", 5),
             chat_key_encryption_key,
             legacy_chat_key_encryption_keys,
-            upload_dir: env::var("UPLOAD_DIR")
-                .unwrap_or_else(|_| "./uploads".to_owned()),
+            upload_dir: env::var("UPLOAD_DIR").unwrap_or_else(|_| "./uploads".to_owned()),
             emote_upload_dir: env::var("EMOTE_UPLOAD_DIR")
                 .unwrap_or_else(|_| "uploads/emotes".to_owned()),
             emote_public_base_url: env::var("EMOTE_PUBLIC_BASE_URL")
@@ -283,7 +282,12 @@ mod tests {
     #[test]
     fn jwt_secret_valid_passes() {
         let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { env::set_var("JWT_SECRET", "a-perfectly-valid-secret-that-is-long-enough-1234") };
+        unsafe {
+            env::set_var(
+                "JWT_SECRET",
+                "a-perfectly-valid-secret-that-is-long-enough-1234",
+            )
+        };
         let secret = jwt_secret_from_env();
         assert_eq!(secret, "a-perfectly-valid-secret-that-is-long-enough-1234");
     }

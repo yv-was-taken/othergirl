@@ -208,7 +208,9 @@
             });
             break;
           case 'typing':
-            setPartnerTyping(Boolean(event.is_typing));
+            if (event.user_id !== $auth.user?.id) {
+              setPartnerTyping(Boolean(event.is_typing));
+            }
             break;
           case 'read_receipt':
             markMessageRead(String(event.message_id));
@@ -407,6 +409,7 @@
       messages={$chat.messages}
       currentUserId={$auth.user.id}
       partnerTyping={$chat.partnerTyping}
+      partnerTypingUpdatedAt={$chat.partnerTypingUpdatedAt}
       connected={$chat.chatId !== null}
       {connectionError}
       partnerName={$chat.partner?.username ?? 'stranger'}

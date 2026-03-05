@@ -6,7 +6,10 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    auth::{jwt::verify_token, middleware::AuthUser},
+    auth::{
+        jwt::verify_token,
+        middleware::{ensure_account_active, AuthUser},
+    },
     categories::models::{Category, Language, SuggestCategoryRequest},
     error::{AppError, AppResult},
     AppState,
@@ -126,7 +129,7 @@ fn slugify(value: &str) -> String {
 }
 
 async fn viewer_allows_nsfw(state: &AppState, headers: &HeaderMap) -> AppResult<bool> {
-    let user_id = extract_user_id_optional(headers, state)?;
+    let user_id = extract_user_id_optional(headers, state).await?;
     let Some(user_id) = user_id else {
         return Ok(false);
     };
@@ -146,7 +149,10 @@ async fn viewer_allows_nsfw(state: &AppState, headers: &HeaderMap) -> AppResult<
     Ok(age_verified)
 }
 
-fn extract_user_id_optional(headers: &HeaderMap, state: &AppState) -> AppResult<Option<Uuid>> {
+async fn extract_user_id_optional(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> AppResult<Option<Uuid>> {
     let Some(auth_header) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -161,6 +167,7 @@ fn extract_user_id_optional(headers: &HeaderMap, state: &AppState) -> AppResult<
     let claims = verify_token(token, &state.jwt)?;
     let user_id = Uuid::parse_str(&claims.sub)
         .map_err(|_| AppError::Unauthorized("invalid token subject".to_owned()))?;
+    ensure_account_active(&state.db, user_id).await?;
 
     Ok(Some(user_id))
 }
