@@ -2,7 +2,8 @@
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import TypingIndicator from '$lib/components/TypingIndicator.svelte';
   import EmotePicker from '$lib/components/EmotePicker.svelte';
-  import { Smile } from 'lucide-svelte';
+  import FlareDisplay from '$lib/components/FlareDisplay.svelte';
+  import { Smile, Sparkles } from 'lucide-svelte';
   import { tick } from 'svelte';
 
   let {
@@ -12,6 +13,8 @@
     connected = false,
     connectionError = '',
     partnerName = 'stranger',
+    partnerFlare = {},
+    partnerAwards = [],
     onsend,
     onleave,
     onnext,
@@ -19,12 +22,14 @@
     onkeepvote,
     onaward
   }: {
-    messages?: { id: string; sender_id: string; content: string; timestamp: string; flagged?: boolean }[];
+    messages?: { id: string; sender_id: string; content: string; timestamp: string; flagged?: boolean; status?: 'sent' | 'read' }[];
     currentUserId?: string | null;
     partnerTyping?: boolean;
     connected?: boolean;
     connectionError?: string;
     partnerName?: string;
+    partnerFlare?: Record<string, any>;
+    partnerAwards?: { award_type: string; spark_amount: number }[];
     onsend?: (detail: { content: string }) => void;
     onleave?: () => void;
     onnext?: () => void;
@@ -89,11 +94,14 @@
   }
 </script>
 
-<div class="surface flex h-[72vh] flex-col">
+<div class="surface flex h-[calc(100dvh-theme(spacing.20))] flex-col">
   <div class="flex items-center justify-between border-b border-[var(--border-default)] px-4 py-3">
     <div>
       <h2 class="font-semibold">Active Chat</h2>
-      <p class="text-xs text-[var(--text-muted)]">with {partnerName}</p>
+      <div class="flex items-center gap-2">
+        <p class="text-xs text-[var(--text-muted)]">with {partnerName}</p>
+        <FlareDisplay flare={partnerFlare} awards={partnerAwards} compact />
+      </div>
     </div>
     <div class="flex items-center gap-2">
       <button class="btn-secondary" onclick={() => onkeepvote?.({ keep: true })} disabled={!connected}>Keep</button>
@@ -107,6 +115,12 @@
     {#if connectionError}
       <div class="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-center text-sm text-red-300">
         {connectionError}
+      </div>
+    {:else if !connected && messages.length === 0}
+      <div class="flex flex-1 flex-col items-center justify-center py-12 text-center">
+        <Sparkles size={48} class="mb-4 text-[var(--text-muted)]" />
+        <h2 class="text-lg font-semibold">Ready to chat?</h2>
+        <p class="mt-1 text-sm text-[var(--text-muted)]">Find someone to talk to</p>
       </div>
     {:else if messages.length === 0 && !partnerTyping}
       <p class="text-sm text-[var(--text-muted)]">No messages yet. Say hi.</p>

@@ -1,16 +1,20 @@
 <script lang="ts">
+  import FlareDisplay from '$lib/components/FlareDisplay.svelte';
+
   let {
     username = 'stranger',
     bio = '',
     badges = [],
     interests = [],
-    flare = {}
+    flare = {},
+    awards = []
   }: {
     username?: string;
     bio?: string;
     badges?: string[];
     interests?: string[];
-    flare?: Record<string, unknown>;
+    flare?: Record<string, any>;
+    awards?: { award_type: string; spark_amount: number }[];
   } = $props();
 </script>
 
@@ -31,7 +35,5 @@
     </div>
   {/if}
 
-  {#if Object.keys(flare).length > 0}
-    <pre class="overflow-x-auto rounded-xl bg-[var(--bg-elevated)] p-2 text-xs text-[var(--text-secondary)]">{JSON.stringify(flare, null, 2)}</pre>
-  {/if}
+  <FlareDisplay {flare} {awards} />
 </div>

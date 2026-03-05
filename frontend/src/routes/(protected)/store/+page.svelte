@@ -2,7 +2,9 @@
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
 
+  import { ShoppingBag } from 'lucide-svelte';
   import FlarePreview from '$lib/components/FlarePreview.svelte';
+  import Skeleton from '$lib/components/Skeleton.svelte';
   import { apiFetch } from '$lib/api';
   import { auth } from '$lib/stores/auth';
 
@@ -132,8 +134,23 @@
 
   {#if !$auth.user}
     <div class="surface p-4 text-[var(--text-secondary)]">Login to use the store.</div>
+  {:else if loading}
+    <div class="grid gap-3 md:grid-cols-2">
+      {#each Array(4) as _}
+        <div class="surface space-y-3 p-4">
+          <Skeleton variant="text" width="50%" />
+          <Skeleton variant="text" count={2} />
+          <Skeleton variant="text" width="30%" height="0.625rem" />
+          <Skeleton variant="rect" width="100%" height="2.25rem" />
+        </div>
+      {/each}
+    </div>
   {:else if items.length === 0}
-    <div class="surface p-4 text-[var(--text-secondary)]">No store items available.</div>
+    <div class="surface flex flex-col items-center justify-center py-12 text-center">
+      <ShoppingBag size={48} class="mb-4 text-[var(--text-muted)]" />
+      <h2 class="text-lg font-semibold">Store is empty</h2>
+      <p class="mt-1 text-sm text-[var(--text-muted)]">Check back later for new items</p>
+    </div>
   {:else}
     <div class="grid gap-3 md:grid-cols-2">
       {#each items as item}

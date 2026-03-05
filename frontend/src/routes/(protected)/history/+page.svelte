@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
 
+  import { MessageCircle } from 'lucide-svelte';
+  import Skeleton from '$lib/components/Skeleton.svelte';
   import { apiFetch } from '$lib/api';
   import { auth } from '$lib/stores/auth';
 
@@ -59,8 +61,22 @@
 
   {#if !$auth.user}
     <div class="surface p-5 text-[var(--text-secondary)]">Login to view history.</div>
+  {:else if loading}
+    <div class="space-y-2">
+      {#each Array(5) as _}
+        <div class="surface flex items-center justify-between p-4">
+          <Skeleton variant="text" width="40%" />
+          <Skeleton variant="text" width="20%" height="0.625rem" />
+        </div>
+      {/each}
+    </div>
   {:else if chats.length === 0}
-    <div class="surface p-5 text-[var(--text-secondary)]">No chats yet.</div>
+    <div class="surface flex flex-col items-center justify-center py-12 text-center">
+      <MessageCircle size={48} class="mb-4 text-[var(--text-muted)]" />
+      <h2 class="text-lg font-semibold">No conversations yet</h2>
+      <p class="mt-1 text-sm text-[var(--text-muted)]">Start chatting to see your history here</p>
+      <a href="/chat" class="btn-primary mt-4">Start chatting</a>
+    </div>
   {:else}
     <div class="space-y-2">
       {#each chats as chat}

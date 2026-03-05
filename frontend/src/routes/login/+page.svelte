@@ -4,11 +4,14 @@
   import { get } from 'svelte/store';
   import { toast } from 'svelte-sonner';
 
+  import { Eye, EyeOff } from 'lucide-svelte';
+
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
   import type { AuthResponse } from '$lib/types';
 
   let mode: 'login' | 'register' = $state('login');
+  let showPassword = $state(false);
 
   let username = $state('');
   let email = $state('');
@@ -191,7 +194,12 @@
 
       <div>
         <label for="password-input" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Password</label>
-        <input id="password-input" class="input" bind:value={password} required type="password" minlength={8} />
+        <div class="relative">
+          <input id="password-input" class="input pr-10" bind:value={password} required type={showPassword ? 'text' : 'password'} minlength={8} />
+          <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]" onclick={() => showPassword = !showPassword}>
+            {#if showPassword}<EyeOff size={18} />{:else}<Eye size={18} />{/if}
+          </button>
+        </div>
       </div>
 
       {#if mode === 'register'}

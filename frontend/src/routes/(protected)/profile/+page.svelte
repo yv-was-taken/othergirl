@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
 
+  import Skeleton from '$lib/components/Skeleton.svelte';
+  import FlareDisplay from '$lib/components/FlareDisplay.svelte';
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
   import type { UserResponse } from '$lib/types';
@@ -14,21 +16,26 @@
 
   let categories: Category[] = $state([]);
   let selectedInterests: string[] = $state([]);
+  let equippedFlare: Record<string, any> = $state({});
 
   onMount(async () => {
     if (!$auth.token) return;
 
     loading = true;
     try {
-      const [profile, categoryList] = await Promise.all([
+      const [profile, categoryList, flareData] = await Promise.all([
         apiFetch<UserResponse>('/api/users/me'),
-        apiFetch<Category[]>('/api/categories')
+        apiFetch<Category[]>('/api/categories'),
+        apiFetch<{ equipped: { item_type: string; asset_data: any }[] }>('/api/users/me/flare').catch(() => ({ equipped: [] }))
       ]);
 
       categories = categoryList;
       bio = profile.bio ?? '';
       isAgeVerified = profile.is_age_verified;
       selectedInterests = profile.interest_category_ids ?? [];
+      equippedFlare = Object.fromEntries(
+        flareData.equipped.map((item) => [item.item_type, item.asset_data])
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load profile');
     } finally {
@@ -83,7 +90,33 @@
 
   {#if !$auth.user}
     <div class="surface p-4 text-[var(--text-secondary)]">Login to edit your profile.</div>
+  {:else if loading}
+    <div class="surface space-y-4 p-5">
+      <div>
+        <Skeleton variant="text" width="3rem" height="0.625rem" />
+        <div class="mt-2">
+          <Skeleton variant="rect" width="100%" height="7rem" />
+        </div>
+      </div>
+      <Skeleton variant="text" width="40%" />
+      <div class="space-y-2">
+        <Skeleton variant="text" width="4rem" height="0.625rem" />
+        <div class="grid gap-2 md:grid-cols-3">
+          {#each Array(6) as _}
+            <Skeleton variant="rect" width="100%" height="2.5rem" />
+          {/each}
+        </div>
+      </div>
+      <Skeleton variant="rect" width="7rem" height="2.5rem" />
+    </div>
   {:else}
+    {#if Object.keys(equippedFlare).length > 0}
+      <div class="surface space-y-2 p-4">
+        <p class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Equipped flare</p>
+        <FlareDisplay flare={equippedFlare} />
+      </div>
+    {/if}
+
     <div class="surface space-y-4 p-5">
       <div>
         <label for="bio-input" class="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">Bio</label>
