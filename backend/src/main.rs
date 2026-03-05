@@ -23,7 +23,12 @@ use axum::{
     Json, Router,
 };
 use sqlx::PgPool;
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    cors::CorsLayer,
+    services::ServeDir,
+    set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
+};
 use tracing::{info, warn};
 
 use crate::{auth::jwt::JwtSettings, config::AppConfig};
@@ -160,6 +165,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .merge(api)
         .layer(cors)
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            axum::http::HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

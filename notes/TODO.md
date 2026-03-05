@@ -2,9 +2,9 @@
 
 ## Security
 
-- [ ] **Permissive CORS**: Backend currently allows all origins — restrict to production domain(s)
-- [ ] **Stripe webhook verification**: Verify `stripe-signature` using constant-time comparison (currently uses `hmac` crate — audit for timing safety)
-- [ ] **Security headers**: Add CSP, X-Frame-Options, HSTS via `tower-http` or reverse proxy config
+- [x] **Permissive CORS**: Restricted to specific origins (panics on wildcard) — fixed in h03
+- [x] **Stripe webhook verification**: Uses `hmac` crate's `verify_slice()` which delegates to `subtle::ConstantTimeEq` — already timing-safe
+- [x] **Security headers**: Added CSP, X-Frame-Options, X-Content-Type-Options, HSTS via `tower-http` SetResponseHeaderLayer
 
 ## Testing
 
