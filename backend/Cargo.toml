@@ -35,3 +35,10 @@ unicode-normalization = "0.1"
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 validator = { version = "0.18", features = ["derive"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"
