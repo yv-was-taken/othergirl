@@ -12,6 +12,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dotenvy = "0.15"
 futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 hmac = "0.12"
 oauth2 = { version = "4", default-features = false, features = ["reqwest"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

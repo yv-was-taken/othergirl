@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth;
 pub mod awards;
 pub mod categories;
@@ -9,6 +10,7 @@ pub mod error;
 pub mod flare;
 pub mod matchmaking;
 pub mod moderation;
+pub mod notifications;
 pub mod payments;
 pub mod rate_limit;
 pub mod redis_client;
@@ -103,6 +105,8 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
         .nest("/api/awards", awards::routes())
         .nest("/api", moderation::routes())
         .nest("/api/emotes", emotes::routes())
+        .nest("/api/notifications", notifications::routes())
+        .nest("/api/admin", admin::routes())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::middleware,
@@ -110,6 +114,14 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .nest_service(
+            "/assets/avatars",
+            ServeDir::new(
+                std::path::Path::new(&state.config.upload_dir)
+                    .join("avatars"),
+            )
+            .append_index_html_on_directories(false),
+        )
         .nest_service(
             "/assets/emotes",
             ServeDir::new(state.config.emote_upload_dir.as_str())

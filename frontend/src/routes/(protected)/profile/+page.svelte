@@ -4,6 +4,8 @@
 
   import Skeleton from '$lib/components/Skeleton.svelte';
   import FlareDisplay from '$lib/components/FlareDisplay.svelte';
+  import Avatar from '$lib/components/Avatar.svelte';
+  import { Camera } from 'lucide-svelte';
   import { apiFetch } from '$lib/api';
   import { auth, setSession } from '$lib/stores/auth';
   import type { UserResponse } from '$lib/types';
@@ -11,8 +13,11 @@
   type Category = { id: string; name: string };
 
   let bio = $state('');
+  let avatarUrl: string | null = $state(null);
   let isAgeVerified = $state(false);
   let loading = $state(false);
+  let avatarUploading = $state(false);
+  let avatarInput: HTMLInputElement = $state(null!);
 
   let categories: Category[] = $state([]);
   let selectedInterests: string[] = $state([]);
@@ -31,6 +36,7 @@
 
       categories = categoryList;
       bio = profile.bio ?? '';
+      avatarUrl = profile.avatar_url ?? null;
       isAgeVerified = profile.is_age_verified;
       selectedInterests = profile.interest_category_ids ?? [];
       equippedFlare = Object.fromEntries(
@@ -48,6 +54,34 @@
       selectedInterests = selectedInterests.filter((v) => v !== id);
     } else {
       selectedInterests = [...selectedInterests, id];
+    }
+  }
+
+  async function uploadAvatar(event: Event) {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+
+    avatarUploading = true;
+    try {
+      const formData = new FormData();
+      formData.append('avatar', file);
+      const result = await apiFetch<{ avatar_url: string }>('/api/users/me/avatar', {
+        method: 'POST',
+        body: formData
+      });
+      avatarUrl = result.avatar_url;
+
+      if ($auth.token && $auth.user) {
+        setSession($auth.token, { ...$auth.user, avatar_url: result.avatar_url });
+      }
+
+      toast.success('Avatar updated');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to upload avatar');
+    } finally {
+      avatarUploading = false;
+      target.value = '';
     }
   }
 
@@ -70,6 +104,7 @@
           id: profile.id,
           username: profile.username,
           email: profile.email,
+          avatar_url: profile.avatar_url,
           is_premium: profile.is_premium,
           is_age_verified: profile.is_age_verified,
           created_at: profile.created_at
@@ -112,6 +147,32 @@
       <Skeleton variant="rect" width="7rem" height="2.5rem" />
     </div>
   {:else}
+    <div class="surface flex items-center gap-4 p-4">
+      <button
+        class="group relative cursor-pointer"
+        onclick={() => avatarInput.click()}
+        aria-label="Change avatar"
+        disabled={avatarUploading}
+        type="button"
+      >
+        <Avatar url={avatarUrl} username={$auth.user?.username ?? ''} size={72} />
+        <span class="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition group-hover:opacity-100">
+          <Camera size={20} class="text-white" />
+        </span>
+      </button>
+      <div>
+        <p class="text-lg font-semibold text-[var(--text-primary)]">{$auth.user?.username}</p>
+        <p class="text-xs text-[var(--text-muted)]">Click avatar to upload a new photo</p>
+      </div>
+      <input
+        bind:this={avatarInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        class="hidden"
+        onchange={uploadAvatar}
+      />
+    </div>
+
     {#if Object.keys(equippedFlare).length > 0}
       <div class="surface space-y-2 p-4">
         <p class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Equipped flare</p>

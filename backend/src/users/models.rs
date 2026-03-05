@@ -9,6 +9,7 @@ pub struct UserProfile {
     pub id: Uuid,
     pub username: String,
     pub email: Option<String>,
+    pub avatar_url: Option<String>,
     pub bio: String,
     pub is_premium: bool,
     pub is_age_verified: bool,

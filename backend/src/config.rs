@@ -38,6 +38,7 @@ pub struct AppConfig {
     pub cooldown_seconds: u64,
     pub chat_key_encryption_key: [u8; 32],
     pub legacy_chat_key_encryption_keys: Vec<[u8; 32]>,
+    pub upload_dir: String,
     pub emote_upload_dir: String,
     pub emote_public_base_url: String,
     pub admin_user_ids: Vec<Uuid>,
@@ -98,6 +99,8 @@ impl AppConfig {
             cooldown_seconds: env_u64("MATCH_COOLDOWN_SECONDS", 5),
             chat_key_encryption_key,
             legacy_chat_key_encryption_keys,
+            upload_dir: env::var("UPLOAD_DIR")
+                .unwrap_or_else(|_| "./uploads".to_owned()),
             emote_upload_dir: env::var("EMOTE_UPLOAD_DIR")
                 .unwrap_or_else(|_| "uploads/emotes".to_owned()),
             emote_public_base_url: env::var("EMOTE_PUBLIC_BASE_URL")

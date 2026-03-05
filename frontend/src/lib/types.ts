@@ -8,6 +8,7 @@ export type UserResponse = {
   id: string;
   username: string;
   email?: string | null;
+  avatar_url?: string | null;
   bio?: string;
   is_premium: boolean;
   is_age_verified: boolean;

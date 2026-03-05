@@ -13,6 +13,7 @@ pub fn routes() -> Router<AppState> {
             "/me/flare",
             get(handlers::get_my_flare).put(handlers::update_my_flare),
         )
+        .route("/me/avatar", post(handlers::upload_avatar))
         .route("/me/delete", post(handlers::delete_me))
         .route("/me/cancel-deletion", post(handlers::cancel_deletion))
 }

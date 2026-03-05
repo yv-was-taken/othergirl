@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+use std::path::Path;
 
-use axum::{extract::State, Json};
+use axum::{extract::{Multipart, State}, Json};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -20,7 +21,7 @@ pub async fn get_me(
 ) -> AppResult<Json<serde_json::Value>> {
     let user = sqlx::query_as::<_, UserProfile>(
         r#"
-        SELECT id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at, deleted_at, deletion_scheduled_at
+        SELECT id, username, email, avatar_url, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at, deleted_at, deletion_scheduled_at
         FROM users
         WHERE id = $1
         "#,
@@ -51,7 +52,7 @@ pub async fn update_me(
             bio = COALESCE($2, bio),
             updated_at = NOW()
         WHERE id = $1
-        RETURNING id, username, email, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at, deleted_at, deletion_scheduled_at
+        RETURNING id, username, email, avatar_url, bio, is_premium, is_age_verified, keep_count, reputation_score, created_at, deleted_at, deletion_scheduled_at
         "#,
     )
     .bind(auth_user.user_id)
@@ -215,11 +216,103 @@ pub async fn update_my_flare(
     })))
 }
 
+const MAX_AVATAR_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+const ALLOWED_AVATAR_TYPES: &[(&str, &str)] = &[
+    ("image/jpeg", "jpg"),
+    ("image/png", "png"),
+    ("image/webp", "webp"),
+    ("image/gif", "gif"),
+];
+
+pub async fn upload_avatar(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    mut multipart: Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("multipart error: {e}")))?
+        .ok_or_else(|| AppError::BadRequest("no file uploaded".to_owned()))?;
+
+    let content_type = field
+        .content_type()
+        .unwrap_or("")
+        .to_owned();
+
+    let ext = ALLOWED_AVATAR_TYPES
+        .iter()
+        .find(|(mime, _)| *mime == content_type)
+        .map(|(_, ext)| *ext)
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "unsupported image type; allowed: jpeg, png, webp, gif".to_owned(),
+            )
+        })?;
+
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("failed to read upload: {e}")))?;
+
+    if data.len() > MAX_AVATAR_SIZE {
+        return Err(AppError::BadRequest("file too large; max 2MB".to_owned()));
+    }
+
+    // Decode and resize image to max 256x256
+    let img = image::load_from_memory(&data)
+        .map_err(|e| AppError::BadRequest(format!("invalid image: {e}")))?;
+    let resized = img.resize(256, 256, image::imageops::FilterType::Lanczos3);
+
+    let avatars_dir = Path::new(&state.config.upload_dir).join("avatars");
+    tokio::fs::create_dir_all(&avatars_dir)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to create avatar dir: {e}")))?;
+
+    // Remove any existing avatar files for this user
+    let filename = format!("{}.{}", auth_user.user_id, ext);
+    for allowed in ALLOWED_AVATAR_TYPES {
+        let old_path = avatars_dir.join(format!("{}.{}", auth_user.user_id, allowed.1));
+        let _ = tokio::fs::remove_file(&old_path).await;
+    }
+
+    let file_path = avatars_dir.join(&filename);
+
+    // Save resized image
+    let save_path = file_path.clone();
+    let save_ext = ext.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use image::ImageFormat;
+        let format = match save_ext.as_str() {
+            "jpg" => ImageFormat::Jpeg,
+            "png" => ImageFormat::Png,
+            "webp" => ImageFormat::WebP,
+            "gif" => ImageFormat::Gif,
+            _ => ImageFormat::Png,
+        };
+        resized.save_with_format(&save_path, format)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("task join error: {e}")))?
+    .map_err(|e| AppError::Internal(format!("failed to save avatar: {e}")))?;
+
+    let avatar_url = format!("/assets/avatars/{filename}");
+
+    sqlx::query("UPDATE users SET avatar_url = $2, updated_at = NOW() WHERE id = $1")
+        .bind(auth_user.user_id)
+        .bind(&avatar_url)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Json(serde_json::json!({ "avatar_url": avatar_url })))
+}
+
 fn user_response(user: &UserProfile, interests: Vec<Uuid>) -> serde_json::Value {
     serde_json::json!({
         "id": user.id,
         "username": user.username,
         "email": user.email,
+        "avatar_url": user.avatar_url,
         "bio": user.bio,
         "is_premium": user.is_premium,
         "is_age_verified": user.is_age_verified,
@@ -306,6 +399,7 @@ mod tests {
             id: Uuid::new_v4(),
             username: "testuser".to_owned(),
             email: Some("test@example.com".to_owned()),
+            avatar_url: None,
             bio: "hello world".to_owned(),
             is_premium: true,
             is_age_verified: false,

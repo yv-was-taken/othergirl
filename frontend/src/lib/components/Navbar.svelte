@@ -3,6 +3,8 @@
   import { auth, clearSession } from '$lib/stores/auth';
   import { theme, toggleTheme } from '$lib/stores/theme';
   import { Sun, Moon } from 'lucide-svelte';
+  import NotificationPanel from '$lib/components/NotificationPanel.svelte';
+  import Avatar from '$lib/components/Avatar.svelte';
 
   let mobileMenuOpen = $state(false);
 
@@ -44,7 +46,8 @@
       {/each}
     </div>
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2">
+      <NotificationPanel />
       <button
         class="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
         onclick={toggleTheme}
@@ -58,7 +61,10 @@
       </button>
 
       {#if $auth.user}
-        <span class="text-sm text-[var(--text-secondary)]">{$auth.user.username}</span>
+        <a href="/profile" class="flex items-center gap-2">
+          <Avatar url={$auth.user.avatar_url} username={$auth.user.username} size={32} />
+          <span class="text-sm text-[var(--text-secondary)]">{$auth.user.username}</span>
+        </a>
         <button class="btn-secondary" onclick={clearSession}>Log out</button>
       {:else}
         <a href="/login" class="btn-primary">Login</a>

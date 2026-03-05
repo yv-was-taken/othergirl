@@ -6,7 +6,7 @@ import type { UserResponse } from '$lib/types';
 
 export type SessionUser = Pick<
   UserResponse,
-  'id' | 'username' | 'email' | 'is_premium' | 'is_age_verified' | 'created_at'
+  'id' | 'username' | 'email' | 'avatar_url' | 'is_premium' | 'is_age_verified' | 'created_at'
 >;
 
 type AuthState = {
