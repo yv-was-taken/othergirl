@@ -318,3 +318,122 @@ fn hex_nibble(byte: u8) -> Result<u8, ()> {
         _ => Err(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a valid Stripe webhook signature header for the given payload, secret, and timestamp.
+    fn build_signature(payload: &[u8], secret: &str, timestamp: i64) -> String {
+        let signed_payload = format!("{timestamp}.{}", String::from_utf8_lossy(payload));
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(signed_payload.as_bytes());
+        let sig_bytes = mac.finalize().into_bytes();
+        let sig_hex: String = sig_bytes.iter().map(|b| format!("{b:02x}")).collect();
+        format!("t={timestamp},v1={sig_hex}")
+    }
+
+    #[test]
+    fn valid_signature_passes() {
+        let payload = b"test payload";
+        let secret = "whsec_test_secret";
+        let timestamp = Utc::now().timestamp();
+        let header = build_signature(payload, secret, timestamp);
+
+        let result = verify_webhook_signature(payload, &header, secret);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn invalid_signature_fails() {
+        let payload = b"test payload";
+        let secret = "whsec_test_secret";
+        let timestamp = Utc::now().timestamp();
+        let header = format!("t={timestamp},v1=0000000000000000000000000000000000000000000000000000000000000000");
+
+        let result = verify_webhook_signature(payload, &header, secret);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn expired_timestamp_fails() {
+        let payload = b"test payload";
+        let secret = "whsec_test_secret";
+        // Timestamp from 10 minutes ago (beyond 5 min tolerance)
+        let old_timestamp = Utc::now().timestamp() - 600;
+        let header = build_signature(payload, secret, old_timestamp);
+
+        let result = verify_webhook_signature(payload, &header, secret);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn future_timestamp_beyond_tolerance_fails() {
+        let payload = b"test payload";
+        let secret = "whsec_test_secret";
+        // Timestamp 10 minutes in the future
+        let future_timestamp = Utc::now().timestamp() + 600;
+        let header = build_signature(payload, secret, future_timestamp);
+
+        let result = verify_webhook_signature(payload, &header, secret);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_timestamp_fails() {
+        let payload = b"test payload";
+        let header = "v1=0000000000000000000000000000000000000000000000000000000000000000";
+
+        let result = verify_webhook_signature(payload, header, "whsec_test_secret");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tampered_payload_fails() {
+        let payload = b"original payload";
+        let secret = "whsec_test_secret";
+        let timestamp = Utc::now().timestamp();
+        let header = build_signature(payload, secret, timestamp);
+
+        // Verify with different payload
+        let result = verify_webhook_signature(b"tampered payload", &header, secret);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn wrong_secret_fails() {
+        let payload = b"test payload";
+        let timestamp = Utc::now().timestamp();
+        let header = build_signature(payload, "correct_secret", timestamp);
+
+        let result = verify_webhook_signature(payload, &header, "wrong_secret");
+        assert!(result.is_err());
+    }
+
+    // --- decode_hex tests ---
+
+    #[test]
+    fn decode_hex_valid() {
+        assert_eq!(decode_hex("48656c6c6f").unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn decode_hex_empty() {
+        assert_eq!(decode_hex("").unwrap(), b"");
+    }
+
+    #[test]
+    fn decode_hex_odd_length_fails() {
+        assert!(decode_hex("abc").is_err());
+    }
+
+    #[test]
+    fn decode_hex_invalid_chars_fails() {
+        assert!(decode_hex("zzzz").is_err());
+    }
+
+    #[test]
+    fn decode_hex_uppercase() {
+        assert_eq!(decode_hex("4F4B").unwrap(), b"OK");
+    }
+}

@@ -230,3 +230,89 @@ fn unwrap_key(payload: &[u8], wrapping_key: &[u8; KEY_LEN]) -> AppResult<Vec<u8>
 
     Ok(decrypted)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checked_nonce_valid_12_bytes() {
+        let bytes = [0u8; NONCE_LEN];
+        let result = checked_nonce(&bytes);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), bytes);
+    }
+
+    #[test]
+    fn checked_nonce_too_short() {
+        let bytes = [0u8; 8];
+        assert!(checked_nonce(&bytes).is_err());
+    }
+
+    #[test]
+    fn checked_nonce_too_long() {
+        let bytes = [0u8; 16];
+        assert!(checked_nonce(&bytes).is_err());
+    }
+
+    #[test]
+    fn checked_nonce_empty() {
+        let bytes: [u8; 0] = [];
+        assert!(checked_nonce(&bytes).is_err());
+    }
+
+    #[test]
+    fn checked_cipher_valid_32_byte_key() {
+        let key = [0u8; KEY_LEN];
+        assert!(checked_cipher(&key).is_ok());
+    }
+
+    #[test]
+    fn checked_cipher_too_short_key() {
+        let key = [0u8; 16];
+        assert!(checked_cipher(&key).is_err());
+    }
+
+    #[test]
+    fn checked_cipher_too_long_key() {
+        let key = [0u8; 64];
+        assert!(checked_cipher(&key).is_err());
+    }
+
+    #[test]
+    fn wrap_unwrap_roundtrip() {
+        let wrapping_key = [42u8; KEY_LEN];
+        let raw_key = [7u8; KEY_LEN];
+
+        let wrapped = wrap_key(&raw_key, &wrapping_key).unwrap();
+        // Wrapped payload should be nonce (12) + ciphertext (32 + 16 GCM tag)
+        assert!(wrapped.len() > NONCE_LEN + KEY_LEN);
+
+        let unwrapped = unwrap_key(&wrapped, &wrapping_key).unwrap();
+        assert_eq!(unwrapped, raw_key);
+    }
+
+    #[test]
+    fn unwrap_with_wrong_key_fails() {
+        let wrapping_key = [42u8; KEY_LEN];
+        let wrong_key = [99u8; KEY_LEN];
+        let raw_key = [7u8; KEY_LEN];
+
+        let wrapped = wrap_key(&raw_key, &wrapping_key).unwrap();
+        assert!(unwrap_key(&wrapped, &wrong_key).is_err());
+    }
+
+    #[test]
+    fn unwrap_too_short_payload_fails() {
+        let wrapping_key = [42u8; KEY_LEN];
+        let short_payload = [0u8; NONCE_LEN]; // exactly NONCE_LEN, no ciphertext
+        assert!(unwrap_key(&short_payload, &wrapping_key).is_err());
+    }
+
+    #[test]
+    fn wrap_key_wrong_length_raw_key_fails() {
+        let wrapping_key = [42u8; KEY_LEN];
+        let bad_raw_key = [7u8; 16]; // wrong length
+        assert!(wrap_key(&bad_raw_key, &wrapping_key).is_err());
+    }
+}

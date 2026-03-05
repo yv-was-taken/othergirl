@@ -89,3 +89,91 @@ pub async fn is_token_revoked(jti: &str, redis: &redis::Client) -> AppResult<boo
 
     Ok(exists)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_settings() -> JwtSettings {
+        JwtSettings::new("a-very-long-test-secret-that-is-at-least-32-chars".to_owned(), 60)
+    }
+
+    #[test]
+    fn valid_token_decodes_correctly() {
+        let settings = test_settings();
+        let user_id = Uuid::new_v4();
+        let token = issue_token(user_id, &settings).unwrap();
+        let claims = verify_token(&token, &settings).unwrap();
+        assert_eq!(claims.sub, user_id.to_string());
+    }
+
+    #[test]
+    fn jti_claim_is_present_and_valid_uuid() {
+        let settings = test_settings();
+        let user_id = Uuid::new_v4();
+        let token = issue_token(user_id, &settings).unwrap();
+        let claims = verify_token(&token, &settings).unwrap();
+        assert!(!claims.jti.is_empty());
+        Uuid::parse_str(&claims.jti).expect("jti should be a valid UUID");
+    }
+
+    #[test]
+    fn expired_token_fails() {
+        let settings = test_settings();
+        // Manually craft a token that expired 10 minutes ago (beyond default leeway)
+        let now = Utc::now();
+        let claims = Claims {
+            sub: Uuid::new_v4().to_string(),
+            jti: Uuid::new_v4().to_string(),
+            iat: (now - Duration::minutes(20)).timestamp(),
+            exp: (now - Duration::minutes(10)).timestamp(),
+        };
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(settings.secret.as_bytes()),
+        )
+        .unwrap();
+        let result = verify_token(&token, &settings);
+        assert!(result.is_err(), "expired token should fail verification");
+    }
+
+    #[test]
+    fn tampered_token_fails() {
+        let settings = test_settings();
+        let user_id = Uuid::new_v4();
+        let token = issue_token(user_id, &settings).unwrap();
+
+        // Tamper with the token by flipping a character in the signature
+        let mut tampered = token.clone();
+        let last = tampered.pop().unwrap();
+        tampered.push(if last == 'A' { 'B' } else { 'A' });
+
+        let result = verify_token(&tampered, &settings);
+        assert!(result.is_err(), "tampered token should fail verification");
+    }
+
+    #[test]
+    fn wrong_secret_fails() {
+        let settings = test_settings();
+        let user_id = Uuid::new_v4();
+        let token = issue_token(user_id, &settings).unwrap();
+
+        let wrong_settings = JwtSettings::new(
+            "a-completely-different-secret-that-is-long-enough".to_owned(),
+            60,
+        );
+        let result = verify_token(&token, &wrong_settings);
+        assert!(result.is_err(), "token verified with wrong secret should fail");
+    }
+
+    #[test]
+    fn different_users_get_different_jtis() {
+        let settings = test_settings();
+        let token1 = issue_token(Uuid::new_v4(), &settings).unwrap();
+        let token2 = issue_token(Uuid::new_v4(), &settings).unwrap();
+        let claims1 = verify_token(&token1, &settings).unwrap();
+        let claims2 = verify_token(&token2, &settings).unwrap();
+        assert_ne!(claims1.jti, claims2.jti);
+    }
+}

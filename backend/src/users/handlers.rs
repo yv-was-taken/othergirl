@@ -227,6 +227,64 @@ fn user_response(user: &UserProfile, interests: Vec<Uuid>) -> serde_json::Value 
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_user() -> UserProfile {
+        UserProfile {
+            id: Uuid::new_v4(),
+            username: "testuser".to_owned(),
+            email: Some("test@example.com".to_owned()),
+            bio: "hello world".to_owned(),
+            is_premium: true,
+            is_age_verified: false,
+            keep_count: 5,
+            reputation_score: 0.95,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn user_response_contains_all_fields() {
+        let user = make_user();
+        let interest1 = Uuid::new_v4();
+        let interest2 = Uuid::new_v4();
+        let resp = user_response(&user, vec![interest1, interest2]);
+
+        assert_eq!(resp["id"], user.id.to_string());
+        assert_eq!(resp["username"], "testuser");
+        assert_eq!(resp["email"], "test@example.com");
+        assert_eq!(resp["bio"], "hello world");
+        assert_eq!(resp["is_premium"], true);
+        assert_eq!(resp["is_age_verified"], false);
+        assert_eq!(resp["keep_count"], 5);
+        assert_eq!(resp["reputation_score"], 0.95);
+        assert!(resp["created_at"].is_string());
+        let ids = resp["interest_category_ids"].as_array().unwrap();
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn user_response_with_no_email() {
+        let mut user = make_user();
+        user.email = None;
+        let resp = user_response(&user, vec![]);
+
+        assert!(resp["email"].is_null());
+    }
+
+    #[test]
+    fn user_response_with_empty_interests() {
+        let user = make_user();
+        let resp = user_response(&user, vec![]);
+
+        let ids = resp["interest_category_ids"].as_array().unwrap();
+        assert!(ids.is_empty());
+    }
+}
+
 async fn load_interests(state: &AppState, user_id: Uuid) -> AppResult<Vec<Uuid>> {
     let interests = sqlx::query_scalar::<_, Uuid>(
         r#"

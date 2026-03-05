@@ -213,3 +213,154 @@ static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
 fn contains_link(content: &str) -> bool {
     URL_RE.is_match(content)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- normalize_content tests ---
+
+    #[test]
+    fn normalize_strips_zero_width_chars() {
+        // "k\u{200B}ill" should become "kill"
+        let input = "k\u{200B}ill";
+        assert_eq!(normalize_content(input), "kill");
+    }
+
+    #[test]
+    fn normalize_strips_multiple_invisible_chars() {
+        let input = "h\u{200C}e\u{200D}l\u{FEFF}lo";
+        assert_eq!(normalize_content(input), "hello");
+    }
+
+    #[test]
+    fn normalize_collapses_whitespace() {
+        let input = "  hello    world  ";
+        assert_eq!(normalize_content(input), "hello world");
+    }
+
+    #[test]
+    fn normalize_handles_tabs_and_newlines() {
+        let input = "hello\t\n\nworld";
+        assert_eq!(normalize_content(input), "hello world");
+    }
+
+    #[test]
+    fn normalize_empty_string() {
+        assert_eq!(normalize_content(""), "");
+    }
+
+    #[test]
+    fn normalize_only_whitespace() {
+        assert_eq!(normalize_content("   \t\n  "), "");
+    }
+
+    #[test]
+    fn normalize_strips_soft_hyphen() {
+        let input = "ex\u{00AD}ample";
+        assert_eq!(normalize_content(input), "example");
+    }
+
+    #[test]
+    fn normalize_strips_variation_selectors() {
+        let input = "text\u{FE0F}here";
+        assert_eq!(normalize_content(input), "texthere");
+    }
+
+    // --- contains_link tests ---
+
+    #[test]
+    fn contains_link_detects_http_url() {
+        assert!(contains_link("check out http://example.com"));
+    }
+
+    #[test]
+    fn contains_link_detects_https_url() {
+        assert!(contains_link("visit https://example.com/path"));
+    }
+
+    #[test]
+    fn contains_link_detects_www_prefix() {
+        assert!(contains_link("go to www.example.com"));
+    }
+
+    #[test]
+    fn contains_link_no_false_positive_on_plain_text() {
+        assert!(!contains_link("hello world, no links here"));
+    }
+
+    #[test]
+    fn contains_link_no_false_positive_on_dotted_words() {
+        assert!(!contains_link("e.g. this is fine"));
+    }
+
+    #[test]
+    fn contains_link_case_insensitive() {
+        assert!(contains_link("go to HTTP://EXAMPLE.COM"));
+    }
+
+    // --- keyword_flags tests ---
+
+    #[test]
+    fn keyword_flags_detects_blocklisted_term() {
+        let flags = keyword_flags("this contains kill yourself in it");
+        assert!(!flags.is_empty());
+        assert!(flags.iter().any(|r| r.contains("kill yourself")));
+    }
+
+    #[test]
+    fn keyword_flags_case_insensitive() {
+        let flags = keyword_flags("KILL YOURSELF");
+        assert!(!flags.is_empty());
+    }
+
+    #[test]
+    fn keyword_flags_no_match_on_clean_content() {
+        let flags = keyword_flags("hello, how are you today?");
+        assert!(flags.is_empty());
+    }
+
+    // --- SafetyScanResult::verify_content tests ---
+
+    #[test]
+    fn verify_content_matches_original() {
+        let content = "test message";
+        let hash = sha256_content(content);
+        let result = SafetyScanResult {
+            flagged: false,
+            rejected: false,
+            reasons: vec![],
+            normalized_content: content.to_owned(),
+            content_hash: hash,
+        };
+        assert!(result.verify_content(content));
+    }
+
+    #[test]
+    fn verify_content_fails_on_different_content() {
+        let content = "test message";
+        let hash = sha256_content(content);
+        let result = SafetyScanResult {
+            flagged: false,
+            rejected: false,
+            reasons: vec![],
+            normalized_content: content.to_owned(),
+            content_hash: hash,
+        };
+        assert!(!result.verify_content("different message"));
+    }
+
+    // --- is_invisible_char tests ---
+
+    #[test]
+    fn invisible_char_detects_zwsp() {
+        assert!(is_invisible_char('\u{200B}'));
+    }
+
+    #[test]
+    fn invisible_char_does_not_flag_regular_chars() {
+        assert!(!is_invisible_char('a'));
+        assert!(!is_invisible_char(' '));
+        assert!(!is_invisible_char('1'));
+    }
+}
