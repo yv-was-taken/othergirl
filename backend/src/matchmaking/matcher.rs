@@ -35,11 +35,13 @@ pub fn spawn_matcher(
 }
 
 async fn run_match_cycle(state: &AppState) -> Result<(), crate::error::AppError> {
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
-    let queue_keys = queue::queue_keys(&mut conn).await?;
+    let mut conn = state.redis.get().await.map_err(|e| {
+        crate::error::AppError::Internal(format!("redis pool error: {e}"))
+    })?;
+    let queue_keys = queue::queue_keys(&mut *conn).await?;
 
     for queue_key in queue_keys {
-        try_match_queue(state, &mut conn, queue_key.as_str()).await?;
+        try_match_queue(state, &mut *conn, queue_key.as_str()).await?;
     }
 
     Ok(())

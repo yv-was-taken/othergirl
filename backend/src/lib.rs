@@ -9,6 +9,7 @@ pub mod emotes;
 pub mod error;
 pub mod flare;
 pub mod matchmaking;
+pub mod metrics;
 pub mod moderation;
 pub mod notifications;
 pub mod payments;
@@ -17,10 +18,13 @@ pub mod redis_client;
 pub mod users;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
-    extract::{FromRef, State},
-    middleware,
+    body::Body,
+    extract::{FromRef, Request, State},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -32,13 +36,13 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{auth::jwt::JwtSettings, config::AppConfig};
+use crate::{auth::jwt::JwtSettings, config::AppConfig, redis_client::RedisPool};
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub db: PgPool,
-    pub redis: ::redis::Client,
+    pub redis: RedisPool,
     pub jwt: JwtSettings,
     pub chat_hub: chat::websocket::ChatHub,
 }
@@ -49,7 +53,7 @@ impl FromRef<AppState> for JwtSettings {
     }
 }
 
-impl FromRef<AppState> for redis::Client {
+impl FromRef<AppState> for RedisPool {
     fn from_ref(state: &AppState) -> Self {
         state.redis.clone()
     }
@@ -114,6 +118,7 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(metrics_handler))
         .nest_service(
             "/assets/avatars",
             ServeDir::new(
@@ -129,6 +134,12 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
         )
         .merge(api)
         .layer(cors)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static(
+                "public, max-age=86400, stale-while-revalidate=604800",
+            ),
+        ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::X_FRAME_OPTIONS,
             axum::http::HeaderValue::from_static("DENY"),
@@ -150,20 +161,48 @@ pub fn build_app(state: AppState, cors_origin: &str) -> Router {
             ),
         ))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(metrics_middleware))
         .with_state(state)
+}
+
+async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+    let start = Instant::now();
+
+    let response = next.run(req).await;
+
+    let status = response.status().as_u16().to_string();
+    let duration = start.elapsed().as_secs_f64();
+
+    metrics::HTTP_REQUESTS_TOTAL
+        .with_label_values(&[&method, &path, &status])
+        .inc();
+    metrics::HTTP_REQUEST_DURATION_SECONDS
+        .with_label_values(&[&method, &path])
+        .observe(duration);
+
+    response
+}
+
+async fn metrics_handler() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        metrics::render_metrics(),
+    )
 }
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
-    let redis_ok = {
-        let mut conn = state.redis.get_multiplexed_tokio_connection().await;
-        match conn {
-            Ok(ref mut c) => redis::cmd("PING")
-                .query_async::<_, String>(c)
-                .await
-                .is_ok(),
-            Err(_) => false,
-        }
+    let redis_ok = match state.redis.get().await {
+        Ok(mut conn) => redis::cmd("PING")
+            .query_async::<String>(&mut *conn)
+            .await
+            .is_ok(),
+        Err(_) => false,
     };
     let status = if db_ok && redis_ok { "ok" } else { "unhealthy" };
     Json(serde_json::json!({

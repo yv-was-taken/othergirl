@@ -9,6 +9,7 @@ use othergirl_backend::{
     config::AppConfig,
     db,
     matchmaking,
+    metrics,
     payments,
     redis_client,
     AppState,
@@ -23,26 +24,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Initialize Sentry if DSN is set (keeps _guard alive for entire process)
+    let _sentry_guard = std::env::var("SENTRY_DSN").ok().map(|dsn| {
+        sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                traces_sample_rate: 0.1,
+                ..Default::default()
+            },
+        ))
+    });
+
     let config = AppConfig::from_env();
     let db = db::connect(&config.database_url, config.db_max_connections).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
-    let redis = redis_client::connect(&config.redis_url)?;
+    let redis = redis_client::connect(&config.redis_url).await?;
 
     // Validate Redis connection
-    let mut conn = redis.get_multiplexed_tokio_connection().await?;
-    redis::cmd("PING")
-        .query_async::<_, String>(&mut conn)
-        .await
-        .expect("failed to connect to Redis — is it running?");
+    {
+        let mut conn = redis.get().await.expect("failed to get Redis connection from pool");
+        redis::cmd("PING")
+            .query_async::<String>(&mut *conn)
+            .await
+            .expect("failed to connect to Redis — is it running?");
+    }
     info!("Redis connection validated");
+
+    let chat_hub = chat::websocket::ChatHub::with_redis(redis.clone(), &config.redis_url);
 
     let state = AppState {
         config: Arc::new(config.clone()),
         db,
         redis,
         jwt: JwtSettings::new(config.jwt_secret, config.jwt_ttl_minutes),
-        chat_hub: chat::websocket::ChatHub::new(),
+        chat_hub,
     };
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -60,6 +77,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              or \"https://your-domain.com\". Multiple origins can be comma-separated."
         );
     }
+
+    metrics::init_metrics();
+
+    // Seed the registered-users gauge from the database.
+    let (user_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.db)
+        .await?;
+    metrics::REGISTERED_USERS_TOTAL.set(user_count);
 
     let app = build_app(state, &config.cors_origin);
 

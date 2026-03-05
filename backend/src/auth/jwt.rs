@@ -66,7 +66,7 @@ fn revocation_key(jti: &str) -> String {
 /// Store a revoked token's jti in Redis with TTL matching the JWT's remaining lifetime.
 pub async fn revoke_token(
     claims: &Claims,
-    redis: &redis::Client,
+    redis: &crate::redis_client::RedisPool,
 ) -> AppResult<()> {
     let remaining = claims.exp - Utc::now().timestamp();
     if remaining <= 0 {
@@ -74,17 +74,21 @@ pub async fn revoke_token(
     }
 
     let key = revocation_key(&claims.jti);
-    let mut conn = redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = redis.get().await.map_err(|e| {
+        crate::error::AppError::Internal(format!("redis pool error: {e}"))
+    })?;
     conn.set_ex::<_, _, ()>(&key, 1u8, remaining as u64).await?;
 
     Ok(())
 }
 
 /// Check whether a token has been revoked by its jti.
-pub async fn is_token_revoked(jti: &str, redis: &redis::Client) -> AppResult<bool> {
+pub async fn is_token_revoked(jti: &str, redis: &crate::redis_client::RedisPool) -> AppResult<bool> {
     let key = revocation_key(jti);
 
-    let mut conn = redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = redis.get().await.map_err(|e| {
+        crate::error::AppError::Internal(format!("redis pool error: {e}"))
+    })?;
     let exists: bool = conn.exists(&key).await?;
 
     Ok(exists)

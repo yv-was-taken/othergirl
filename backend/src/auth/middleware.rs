@@ -17,14 +17,14 @@ pub struct AuthUser {
 impl<S> FromRequestParts<S> for AuthUser
 where
     JwtSettings: FromRef<S>,
-    redis::Client: FromRef<S>,
+    crate::redis_client::RedisPool: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> AppResult<Self> {
         let jwt_settings = JwtSettings::from_ref(state);
-        let redis = redis::Client::from_ref(state);
+        let redis = crate::redis_client::RedisPool::from_ref(state);
 
         let header = parts
             .headers

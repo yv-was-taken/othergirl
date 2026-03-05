@@ -21,8 +21,11 @@ stripe = { package = "async-stripe", version = "0.39", default-features = false,
 jsonwebtoken = "9"
 rand = "0.9"
 regex = "1"
-redis = { version = "0.25", features = ["tokio-comp"] }
+bb8 = "0.8"
+bb8-redis = "0.17"
+redis = { version = "0.27", features = ["tokio-comp"] }
 slug = "0.1"
+sentry = { version = "0.34", default-features = false, features = ["reqwest", "rustls", "tracing", "panic"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate", "macros"] }
@@ -35,6 +38,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 unicode-normalization = "0.1"
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+lazy_static = "1"
+prometheus = { version = "0.13", features = ["process"] }
 validator = { version = "0.18", features = ["derive"] }
 
 [dev-dependencies]

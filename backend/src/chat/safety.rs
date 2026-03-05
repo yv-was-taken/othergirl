@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-use crate::{error::AppResult, AppState};
+use crate::{error::{AppError, AppResult}, AppState};
 
 static BLOCKLIST: &[&str] = &[
     "csam",
@@ -187,7 +187,7 @@ fn keyword_flags(content: &str) -> Vec<String> {
 async fn is_flooding(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResult<bool> {
     let key = format!("msg_rate:{chat_id}:{user_id}");
 
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
 
     // Atomic Lua script: INCR + conditional EXPIRE in a single Redis eval,
     // eliminating the TOCTOU race between separate INCR and EXPIRE calls.
@@ -201,7 +201,7 @@ async fn is_flooding(state: &AppState, chat_id: Uuid, user_id: Uuid) -> AppResul
         "#,
     );
 
-    let count: i64 = script.key(&key).arg(5_i64).invoke_async(&mut conn).await?;
+    let count: i64 = script.key(&key).arg(5_i64).invoke_async(&mut *conn).await?;
 
     Ok(count > 10)
 }

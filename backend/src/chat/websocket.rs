@@ -16,7 +16,7 @@ use tokio::{
     task::JoinHandle,
     time::{interval, timeout},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -28,9 +28,27 @@ use crate::{
     AppState,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ChatHub {
     channels: Arc<RwLock<HashMap<Uuid, broadcast::Sender<ServerEvent>>>>,
+    /// Redis subscriber tasks keyed by chat_id — one per active chat channel.
+    redis_subscribers: Arc<RwLock<HashMap<Uuid, JoinHandle<()>>>>,
+    /// Connection pool used for PUBLISH commands. `None` in tests.
+    redis_pool: Option<crate::redis_client::RedisPool>,
+    /// Dedicated Redis client for SUBSCRIBE connections (pub/sub requires a
+    /// non-shared connection). `None` in tests.
+    redis_client: Option<redis::Client>,
+}
+
+impl Default for ChatHub {
+    fn default() -> Self {
+        Self {
+            channels: Arc::default(),
+            redis_subscribers: Arc::default(),
+            redis_pool: None,
+            redis_client: None,
+        }
+    }
 }
 
 impl ChatHub {
@@ -38,31 +56,73 @@ impl ChatHub {
         Self::default()
     }
 
+    /// Create a ChatHub wired to Redis for cross-instance message relay.
+    ///
+    /// `pool` is used for regular PUBLISH commands. `redis_url` is used to
+    /// create dedicated connections for SUBSCRIBE (pub/sub requires a
+    /// non-multiplexed connection).
+    pub fn with_redis(pool: crate::redis_client::RedisPool, redis_url: &str) -> Self {
+        let client = redis::Client::open(redis_url)
+            .expect("invalid REDIS_URL for ChatHub subscriber client");
+        Self {
+            channels: Arc::default(),
+            redis_subscribers: Arc::default(),
+            redis_pool: Some(pool),
+            redis_client: Some(client),
+        }
+    }
+
+    /// Returns the Redis pub/sub channel name for a given chat.
+    fn redis_channel(chat_id: Uuid) -> String {
+        format!("chat:{chat_id}")
+    }
+
     async fn sender_for(&self, chat_id: Uuid) -> broadcast::Sender<ServerEvent> {
         let mut channels = self.channels.write().await;
-        channels
-            .entry(chat_id)
-            .or_insert_with(|| {
-                let (sender, _) = broadcast::channel(256);
-                sender
-            })
-            .clone()
+        if let Some(sender) = channels.get(&chat_id) {
+            return sender.clone();
+        }
+        let (sender, _) = broadcast::channel(256);
+        channels.insert(chat_id, sender.clone());
+
+        // Spawn a Redis subscriber for this chat if Redis is configured and
+        // no subscriber task is already running.
+        if let Some(ref client) = self.redis_client {
+            let mut subs = self.redis_subscribers.write().await;
+            if !subs.contains_key(&chat_id) {
+                let task = spawn_redis_subscriber(client.clone(), chat_id, sender.clone());
+                subs.insert(chat_id, task);
+            }
+        }
+
+        sender
     }
 
     async fn receiver_for(&self, chat_id: Uuid) -> broadcast::Receiver<ServerEvent> {
-        let mut channels = self.channels.write().await;
-        channels
-            .entry(chat_id)
-            .or_insert_with(|| {
-                let (sender, _) = broadcast::channel(256);
-                sender
-            })
-            .subscribe()
+        self.sender_for(chat_id).await.subscribe()
     }
 
+    /// Broadcast an event to the local channel **and** publish it to Redis so
+    /// other backend instances can relay it to their local subscribers.
     pub async fn send(&self, chat_id: Uuid, event: ServerEvent) {
         let sender = self.sender_for(chat_id).await;
-        let _ = sender.send(event);
+        let _ = sender.send(event.clone());
+
+        // Publish to Redis for cross-instance delivery.
+        if let Some(ref pool) = self.redis_pool {
+            if let Ok(payload) = serde_json::to_string(&event) {
+                let channel = Self::redis_channel(chat_id);
+                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                    let mut conn = pool.get().await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+                    let _: () = conn.publish(channel, payload).await?;
+                    Ok(())
+                }
+                .await;
+                if let Err(err) = result {
+                    warn!(?err, %chat_id, "failed to publish chat event to Redis");
+                }
+            }
+        }
     }
 
     async fn prune_if_no_receivers(&self, chat_id: Uuid) -> bool {
@@ -74,6 +134,13 @@ impl ChatHub {
 
         if should_remove {
             channels.remove(&chat_id);
+
+            // Also cancel the Redis subscriber task for this chat.
+            let mut subs = self.redis_subscribers.write().await;
+            if let Some(task) = subs.remove(&chat_id) {
+                task.abort();
+            }
+
             return true;
         }
 
@@ -85,6 +152,71 @@ impl ChatHub {
         let channels = self.channels.read().await;
         channels.contains_key(&chat_id)
     }
+}
+
+/// Spawn a background task that subscribes to the Redis pub/sub channel for
+/// `chat_id` and relays incoming messages into the local broadcast `sender`.
+///
+/// The task reconnects automatically on errors with a short back-off, and
+/// terminates when the `sender` has no more receivers (i.e. the chat was
+/// pruned) or when the task is aborted.
+fn spawn_redis_subscriber(
+    client: redis::Client,
+    chat_id: Uuid,
+    sender: broadcast::Sender<ServerEvent>,
+) -> JoinHandle<()> {
+    let channel_name = ChatHub::redis_channel(chat_id);
+    tokio::spawn(async move {
+        loop {
+            match subscribe_loop(&client, &channel_name, &sender).await {
+                Ok(()) => {
+                    // Clean exit — no more receivers.
+                    debug!(%chat_id, "Redis subscriber exiting: no receivers");
+                    break;
+                }
+                Err(err) => {
+                    warn!(?err, %chat_id, "Redis subscriber error, reconnecting in 2s");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+
+                    // If all receivers are gone while we were sleeping, stop.
+                    if sender.receiver_count() == 0 {
+                        debug!(%chat_id, "Redis subscriber exiting after reconnect: no receivers");
+                        break;
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Inner subscribe loop. Returns `Ok(())` when no receivers remain, or
+/// `Err` on any Redis error so the caller can decide to reconnect.
+async fn subscribe_loop(
+    client: &redis::Client,
+    channel_name: &str,
+    sender: &broadcast::Sender<ServerEvent>,
+) -> Result<(), redis::RedisError> {
+    let mut pubsub = client.get_async_pubsub().await?;
+    pubsub.subscribe(channel_name).await?;
+
+    let mut stream = pubsub.on_message();
+    while let Some(msg) = stream.next().await {
+        if sender.receiver_count() == 0 {
+            return Ok(());
+        }
+        let payload: String = msg.get_payload()?;
+        match serde_json::from_str::<ServerEvent>(&payload) {
+            Ok(event) => {
+                // Send to local broadcast; ignore error (no receivers).
+                let _ = sender.send(event);
+            }
+            Err(err) => {
+                warn!(?err, "failed to deserialize Redis chat event");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,7 +264,7 @@ pub enum AuthResponse {
     Failed { code: String, message: String },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
     Queued {
@@ -234,6 +366,8 @@ async fn handle_socket(
             serde_json::to_string(&AuthResponse::Ok).unwrap().into(),
         ))
         .await;
+
+    crate::metrics::WEBSOCKET_CONNECTIONS_ACTIVE.inc();
 
     if let Err(err) = set_session_presence(&state, user_id).await {
         error!(?err, "failed to register websocket session");
@@ -372,6 +506,8 @@ async fn handle_socket(
             }
         }
     }
+
+    crate::metrics::WEBSOCKET_CONNECTIONS_ACTIVE.dec();
 
     writer_task.abort();
     if let Some(task) = chat_forward_task {
@@ -720,7 +856,7 @@ async fn register_keep_vote(
         }
     }
 
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let vote_key = keep_vote_key(chat_id, voter_id);
     let _: () = conn
         .set_ex(vote_key, if keep { "1" } else { "0" }, 2 * 60 * 60)
@@ -893,14 +1029,14 @@ async fn resolve_partner_payload(
 }
 
 async fn set_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let ttl = state.config.queue_session_ttl_seconds;
     let _: () = conn.set_ex(format!("session:{user_id}"), "1", ttl).await?;
     Ok(())
 }
 
 async fn clear_session_presence(state: &AppState, user_id: Uuid) -> AppResult<()> {
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let _: usize = conn.del(format!("session:{user_id}")).await?;
     Ok(())
 }

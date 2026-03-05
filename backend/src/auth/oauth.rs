@@ -73,7 +73,7 @@ pub async fn oauth_start(
     let state_token = CsrfToken::new_random();
     let oauth_state = state_token.secret().to_owned();
 
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let _: () = conn
         .set_ex(
             oauth_state_key(oauth_state.as_str()),
@@ -139,7 +139,7 @@ pub async fn oauth_callback(
 
     let exchange_code = Uuid::new_v4().simple().to_string();
     let serialized_response = serde_json::to_string(&response).map_err(|e| AppError::Internal(format!("failed to serialize oauth response: {e}")))?;
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let _: () = conn
         .set_ex(
             oauth_exchange_key(exchange_code.as_str()),
@@ -174,13 +174,13 @@ pub async fn oauth_exchange(
         ));
     }
 
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let key = oauth_exchange_key(code);
     let (serialized_response, _): (Option<String>, usize) = redis::pipe()
         .atomic()
         .get(key.as_str())
         .del(key.as_str())
-        .query_async(&mut conn)
+        .query_async(&mut *conn)
         .await?;
 
     let serialized_response = serialized_response.ok_or_else(|| {
@@ -492,6 +492,7 @@ async fn find_or_create_oauth_user(
         .await?;
 
         tx.commit().await?;
+        crate::metrics::REGISTERED_USERS_TOTAL.inc();
         return Ok(user);
     }
 
@@ -589,7 +590,7 @@ async fn validate_oauth_state(
 ) -> AppResult<()> {
     let incoming_state =
         incoming_state.ok_or_else(|| AppError::BadRequest("missing oauth state".to_owned()))?;
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool: {e}")))?;
     let stored_provider: Option<String> = conn.get(oauth_state_key(incoming_state)).await?;
 
     if stored_provider.as_deref() != Some(provider) {

@@ -28,4 +28,10 @@ if [[ -n "$STORAGE_TARGET" ]]; then
   rsync -av "$FILE" "$STORAGE_TARGET"
 fi
 
+# optional S3 upload (requires aws CLI)
+S3_BUCKET="${S3_BUCKET:-}"
+if [[ -n "$S3_BUCKET" ]]; then
+  aws s3 cp "$FILE" "s3://${S3_BUCKET}/backups/$(basename "$FILE")"
+fi
+
 echo "backup written: $FILE"

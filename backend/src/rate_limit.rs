@@ -40,7 +40,7 @@ pub async fn middleware(
 
     let key = format!("rate_limit:{bucket}:{source}");
 
-    let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
+    let mut conn = state.redis.get().await.map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
     let count: i64 = conn.incr(&key, 1_i64).await?;
 
     if count == 1 {

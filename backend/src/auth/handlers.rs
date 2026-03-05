@@ -96,6 +96,8 @@ pub async fn register(
         Err(err) => return Err(err.into()),
     };
 
+    crate::metrics::REGISTERED_USERS_TOTAL.inc();
+
     let token = issue_token(user.id, &state.jwt)?;
 
     Ok(Json(AuthResponse {
