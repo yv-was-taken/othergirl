@@ -59,7 +59,11 @@ impl AppConfig {
             env::var("PUBLIC_WEB_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_owned());
 
         Self {
-            server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_owned()),
+            server_addr: env::var("SERVER_ADDR").unwrap_or_else(|_| {
+                // Railway and similar platforms set PORT; fall back to 8080.
+                let port = env::var("PORT").unwrap_or_else(|_| "8080".to_owned());
+                format!("0.0.0.0:{port}")
+            }),
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
                 "postgres://postgres:postgres@localhost:5432/othergirl".to_owned()
             }),
