@@ -19,5 +19,16 @@ pub async fn connect(redis_url: &str) -> AppResult<RedisPool> {
         .await
         .map_err(|e| AppError::Internal(format!("redis pool error: {e}")))?;
 
+    {
+        let mut conn = pool
+            .get()
+            .await
+            .map_err(|e| AppError::Internal(format!("redis startup check failed: {e}")))?;
+        redis::cmd("PING")
+            .query_async::<String>(&mut *conn)
+            .await
+            .map_err(|e| AppError::Internal(format!("redis PING failed at startup: {e}")))?;
+    }
+
     Ok(pool)
 }
