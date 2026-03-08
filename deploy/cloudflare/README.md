@@ -6,7 +6,7 @@ Frontend is on Cloudflare Pages. Backend stays on VPS and is exposed through Clo
 
 - Frontend: `https://<pages-domain>` (Cloudflare Pages)
 - Backend origin on VPS: `http://127.0.0.1:8080` (Axum only listens locally/public per env)
-- Public API hostname: `https://api.othergirl.com` (Cloudflare Tunnel route to VPS)
+- Public API hostname: `https://api.othergirl.lol` (Cloudflare Tunnel route to VPS)
 
 ## Cloudflare Tunnel Setup (Dashboard)
 
@@ -14,7 +14,7 @@ Frontend is on Cloudflare Pages. Backend stays on VPS and is exposed through Clo
 2. Go to `Networks -> Tunnels`.
 3. Create tunnel (`Cloudflared` connector type).
 4. Add public hostname:
-   - Hostname: `api.othergirl.com`
+   - Hostname: `api.othergirl.lol`
    - Service: `http://localhost:8080`
 5. Copy the connector token.
 
@@ -40,12 +40,12 @@ sudo bash /opt/othergirl/deploy/scripts/deploy.sh
 
 ## Required Pages Environment Variables
 
-- `PUBLIC_API_BASE_URL=https://api.othergirl.com`
+- `PUBLIC_API_BASE_URL=https://api.othergirl.lol`
 
 ## Backend `.env` Values That Must Match Pages/Tunnel
 
 - `CORS_ORIGIN=https://<pages-domain>`
-- `PUBLIC_API_BASE_URL=https://api.othergirl.com`
+- `PUBLIC_API_BASE_URL=https://api.othergirl.lol`
 - `PUBLIC_WEB_BASE_URL=https://<pages-domain>`
 - `STRIPE_SUCCESS_URL=https://<pages-domain>/settings`
 - `STRIPE_CANCEL_URL=https://<pages-domain>/settings`
@@ -56,10 +56,10 @@ sudo bash /opt/othergirl/deploy/scripts/deploy.sh
 
 Configure providers to call back to:
 
-- `https://api.othergirl.com/api/auth/oauth/google/callback`
-- `https://api.othergirl.com/api/auth/oauth/discord/callback`
-- `https://api.othergirl.com/api/auth/oauth/github/callback`
-- `https://api.othergirl.com/api/auth/oauth/telegram/callback`
+- `https://api.othergirl.lol/api/auth/oauth/google/callback`
+- `https://api.othergirl.lol/api/auth/oauth/discord/callback`
+- `https://api.othergirl.lol/api/auth/oauth/github/callback`
+- `https://api.othergirl.lol/api/auth/oauth/telegram/callback`
 
 ## Operational Checks
 
